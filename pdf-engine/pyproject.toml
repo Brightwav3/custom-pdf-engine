@@ -8,6 +8,15 @@ version = "0.1.0"
 description = "Small, explicit PDF editing engine"
 requires-python = ">=3.11"
 
+[project.scripts]
+pdfengine = "pdfengine.cli.main:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+pdfengine = ["schemas/*/*.json"]
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 pythonpath = ["src"]

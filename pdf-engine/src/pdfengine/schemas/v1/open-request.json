@@ -1,0 +1,24 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pdfengine.local/schemas/v1/open-request.json",
+  "title": "Open request",
+  "description": "Open a local PDF file and start an edit session.",
+  "type": "object",
+  "required": ["apiVersion", "requestId", "command", "path"],
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": { "const": "v1" },
+    "requestId": { "type": "string", "minLength": 1 },
+    "command": { "const": "open" },
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Filesystem path to an unencrypted classic-xref PDF."
+    },
+    "password": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Held in memory only; never written to disk or logged."
+    }
+  }
+}

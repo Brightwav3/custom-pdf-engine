@@ -4,23 +4,29 @@ import pytest
 
 from pdfengine import PdfEngineError
 from pdfengine.api.models import (
-    AddTextOperation,
+    CropPages,
+    DeletePages,
     DocumentInfo,
-    ExtractPagesOperation,
-    MergeOperation,
+    ExtractPages,
+    ImportPages,
+    InsertBlankPage,
     PageInfo,
     RenderResult,
-    RotatePagesOperation,
+    ReorderPages,
+    RotatePages,
     SaveOptions,
-    SplitOperation,
+    SetMetadata,
 )
 
 
-def test_page_info_records_page_geometry() -> None:
-    page = PageInfo(index=0, width=612.0, height=792.0, rotation=90)
+def test_page_info_records_page_geometry_and_stable_identity() -> None:
+    page = PageInfo(
+        index=0, width=612.0, height=792.0, rotation=90, page_id="page_a", source_index=3
+    )
 
     assert page.index == 0
     assert (page.width, page.height, page.rotation) == (612.0, 792.0, 90)
+    assert (page.page_id, page.source_index) == ("page_a", 3)
 
 
 def test_document_info_owns_immutable_pages() -> None:
@@ -34,21 +40,31 @@ def test_document_info_owns_immutable_pages() -> None:
 
 
 def test_render_result_exposes_rendered_page_data() -> None:
-    result = RenderResult(page_index=0, width=306, height=396, image_bytes=b"PNG")
+    result = RenderResult(page_id="page_a", width=306, height=396, image_bytes=b"PNG")
 
-    assert result.page_index == 0
+    assert result.page_id == "page_a"
     assert result.image_bytes == b"PNG"
-    assert (result.width, result.height) == (306, 396)
+    assert (result.width, result.height, result.cache_hit) == (306, 396, False)
+
+
+def test_rotate_operation_requires_stable_page_ids() -> None:
+    operation = RotatePages(page_ids=("page_a",), degrees=90)
+
+    assert operation.page_ids == ("page_a",)
+    assert operation.degrees == 90
 
 
 @pytest.mark.parametrize(
     ("operation", "expected"),
     [
-        (MergeOperation(source_paths=(Path("a.pdf"), Path("b.pdf"))), "merge"),
-        (SplitOperation(page_ranges=((0, 1),)), "split"),
-        (ExtractPagesOperation(page_indices=(0, 2)), "extract_pages"),
-        (RotatePagesOperation(page_indices=(0,), degrees=90), "rotate_pages"),
-        (AddTextOperation(page_index=0, text="draft", x=12, y=24), "add_text"),
+        (RotatePages(page_ids=("page_a",), degrees=90), "rotate_pages"),
+        (DeletePages(page_ids=("page_a",)), "delete_pages"),
+        (ReorderPages(page_ids=("page_a",)), "reorder_pages"),
+        (ExtractPages(page_ids=("page_a",)), "extract_pages"),
+        (InsertBlankPage(), "insert_blank_page"),
+        (CropPages(page_ids=("page_a",), box=(0, 0, 10, 10)), "crop_pages"),
+        (SetMetadata(entries={"title": "Draft"}), "set_metadata"),
+        (ImportPages(source_session_id="s1", page_ids=("page_b",)), "import_pages"),
     ],
 )
 def test_operations_have_stable_kind(operation: object, expected: str) -> None:
@@ -57,58 +73,60 @@ def test_operations_have_stable_kind(operation: object, expected: str) -> None:
 
 def test_operation_kind_cannot_be_overridden_by_callers() -> None:
     with pytest.raises(TypeError):
-        MergeOperation(source_paths=(Path("a.pdf"),), kind="not_merge")
+        DeletePages(page_ids=("page_a",), kind="not_delete")
 
 
 @pytest.mark.parametrize(
-    ("create", "read_value", "values", "mutate", "expected"),
+    "create",
     [
-        (
-            lambda values: MergeOperation(source_paths=values),
-            lambda operation: operation.source_paths,
-            [Path("a.pdf")],
-            lambda values: values.append(Path("b.pdf")),
-            (Path("a.pdf"),),
-        ),
-        (
-            lambda values: SplitOperation(page_ranges=values),
-            lambda operation: operation.page_ranges,
-            [[0, 1]],
-            lambda values: values[0].append(2),
-            ((0, 1),),
-        ),
-        (
-            lambda values: ExtractPagesOperation(page_indices=values),
-            lambda operation: operation.page_indices,
-            [0],
-            lambda values: values.append(1),
-            (0,),
-        ),
-        (
-            lambda values: RotatePagesOperation(page_indices=values, degrees=90),
-            lambda operation: operation.page_indices,
-            [0],
-            lambda values: values.append(1),
-            (0,),
-        ),
+        lambda values: RotatePages(page_ids=values, degrees=90),
+        lambda values: DeletePages(page_ids=values),
+        lambda values: ReorderPages(page_ids=values),
+        lambda values: ExtractPages(page_ids=values),
     ],
 )
-def test_operations_do_not_retain_mutable_input_collections(
-    create, read_value, values, mutate, expected
-) -> None:
+def test_operations_do_not_retain_mutable_input_collections(create) -> None:
+    values = ["page_a"]
+
     operation = create(values)
+    values.append("page_b")
 
-    mutate(values)
+    assert operation.page_ids == ("page_a",)
 
-    assert read_value(operation) == expected
+
+@pytest.mark.parametrize(
+    ("build", "message"),
+    [
+        (lambda: RotatePages(page_ids=(), degrees=90), "must not be empty"),
+        (lambda: RotatePages(page_ids=("page_a",), degrees=45), "90, 180, or 270"),
+        (lambda: DeletePages(page_ids=("page_a", "page_a")), "must not repeat"),
+        (lambda: ReorderPages(page_ids="page_a"), "sequence of page IDs"),
+        (lambda: InsertBlankPage(width=0), "positive points"),
+        (lambda: CropPages(page_ids=("page_a",), box=(0, 0, 0, 10)), "non-empty"),
+        (lambda: SetMetadata(entries={}), "at least one entry"),
+        (lambda: SetMetadata(entries={"colour": "red"}), "unsupported metadata"),
+        (lambda: ImportPages(source_session_id="", page_ids=("page_a",)), "source session"),
+    ],
+)
+def test_operations_reject_invalid_arguments(build, message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        build()
+
+
+def test_blank_page_carries_a_stable_generated_id() -> None:
+    first = InsertBlankPage()
+    second = InsertBlankPage()
+
+    assert first.page_id.startswith("page_") and first.page_id != second.page_id
+    assert InsertBlankPage(page_id="page_fixed").page_id == "page_fixed"
 
 
 def test_save_options_preserves_explicit_output_preferences() -> None:
-    options = SaveOptions(output_path=Path("out.pdf"), overwrite=True, optimize=True)
+    options = SaveOptions(output_path=Path("out.pdf"), allow_replace_source=True)
 
     assert options.output_path == Path("out.pdf")
-    assert options.overwrite is True
-    assert options.optimize is True
+    assert options.allow_replace_source is True
+    assert options.dry_run is False
 
 
 def test_pdf_engine_error_is_a_runtime_error() -> None:

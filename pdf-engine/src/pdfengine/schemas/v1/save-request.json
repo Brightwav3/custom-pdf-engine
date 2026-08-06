@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pdfengine.local/schemas/v1/save-request.json",
+  "title": "Save request",
+  "description": "Materialize the current operation cursor into a PDF file.",
+  "type": "object",
+  "required": ["apiVersion", "requestId", "command", "sessionId"],
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": { "const": "v1" },
+    "requestId": { "type": "string", "minLength": 1 },
+    "command": { "const": "save" },
+    "sessionId": { "type": "string", "minLength": 1 },
+    "path": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Target file. Defaults to a distinct '<name>-edited.pdf' beside the source."
+    },
+    "allowReplaceSource": {
+      "type": "boolean",
+      "default": false,
+      "description": "Required to write over the opened source file, and only honoured while its fingerprint still matches."
+    },
+    "dryRun": {
+      "type": "boolean",
+      "default": false,
+      "description": "Validate and report the target without writing any file."
+    }
+  }
+}

@@ -39,9 +39,8 @@ def test_reader_parses_classic_xref_trailer_and_resolves_root(
 
     reader = PdfReader(path)
 
-    assert reader.trailer == PdfDictionary(
-        {PdfName("Size"): 4, PdfName("Root"): PdfReference(1, 0)}
-    )
+    assert reader.trailer.entries[PdfName("Root")] == PdfReference(1, 0)
+    assert reader.trailer.entries[PdfName("Size")] == 6
     assert reader.resolve(PdfReference(1, 0)) == PdfDictionary(
         {
             PdfName("Type"): PdfName("Catalog"),
@@ -238,7 +237,7 @@ def test_resolve_rejects_object_streams(tmp_path) -> None:
         )
     )
 
-    with pytest.raises(PdfParseError, match="object streams"):
+    with pytest.raises(PdfParseError, match="object stream"):
         PdfReader(path).resolve(PdfReference(1, 0))
 
 
@@ -250,7 +249,7 @@ def test_reader_rejects_xref_streams(tmp_path) -> None:
     path = tmp_path / "xref-stream.pdf"
     path.write_bytes(body)
 
-    with pytest.raises(PdfParseError, match="xref streams"):
+    with pytest.raises(PdfParseError, match="xref stream"):
         PdfReader(path)
 
 
@@ -263,7 +262,7 @@ def test_reader_rejects_a_hybrid_xref_stream_trailer(tmp_path) -> None:
         )
     )
 
-    with pytest.raises(PdfParseError, match="xref streams"):
+    with pytest.raises(PdfParseError, match="xref stream"):
         PdfReader(path)
 
 

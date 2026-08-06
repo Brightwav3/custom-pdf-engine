@@ -1,0 +1,118 @@
+"""Render pages by invoking a locally installed Poppler ``pdftoppm``."""
+
+from __future__ import annotations
+
+import shutil
+import subprocess
+from pathlib import Path
+
+from pdfengine.errors import RenderError, RendererUnavailableError
+
+from .base import PNG_SIGNATURE, RendererCapability
+
+
+DEFAULT_EXECUTABLE = "pdftoppm"
+
+
+class PopplerRenderer:
+    """A timeout-bounded ``pdftoppm`` adapter.
+
+    Only the configured executable is ever invoked, and it is always given
+    an explicit argument list, so no page value can reach a shell.
+    """
+
+    version = "poppler-1"
+
+    def __init__(
+        self,
+        executable: str | Path = DEFAULT_EXECUTABLE,
+        timeout_seconds: float = 20.0,
+    ) -> None:
+        self._executable = str(executable)
+        self._timeout_seconds = timeout_seconds
+
+    @property
+    def executable(self) -> str:
+        return self._executable
+
+    def _resolve_executable(self) -> str | None:
+        candidate = Path(self._executable)
+        if candidate.is_file():
+            return str(candidate)
+        return shutil.which(self._executable)
+
+    def capability(self) -> RendererCapability:
+        if self._resolve_executable() is None:
+            return RendererCapability(
+                "blocked", f"Poppler executable not found: {self._executable}"
+            )
+        return RendererCapability("ready")
+
+    def render(
+        self,
+        source: Path,
+        page_index: int,
+        width: int,
+        password: str | None,
+        output_dir: Path,
+    ) -> bytes:
+        if page_index < 0:
+            raise RenderError("page index must not be negative")
+        if width <= 0:
+            raise RenderError("render width must be positive")
+
+        executable = self._resolve_executable()
+        if executable is None:
+            raise RendererUnavailableError(
+                f"Poppler executable not found: {self._executable}"
+            )
+
+        output_dir = Path(output_dir)
+        output_dir.mkdir(parents=True, exist_ok=True)
+        prefix = output_dir / f"page-{page_index}-{width}"
+        page_number = str(page_index + 1)
+
+        command = [executable, "-png", "-singlefile"]
+        if password is not None:
+            command += ["-upw", password]
+        command += [
+            "-scale-to-x",
+            str(width),
+            "-scale-to-y",
+            "-1",
+            str(Path(source)),
+            str(prefix),
+            "-f",
+            page_number,
+            "-l",
+            page_number,
+        ]
+
+        try:
+            completed = subprocess.run(
+                command,
+                capture_output=True,
+                timeout=self._timeout_seconds,
+                check=False,
+            )
+        except FileNotFoundError as exc:
+            raise RendererUnavailableError(
+                f"Poppler executable not found: {self._executable}"
+            ) from exc
+        except subprocess.TimeoutExpired as exc:
+            raise RenderError(
+                f"renderer timed out after {self._timeout_seconds:g} seconds"
+            ) from exc
+
+        if completed.returncode != 0:
+            detail = completed.stderr.decode("utf-8", "replace").strip()
+            raise RenderError(f"renderer failed: {detail or 'no diagnostics'}")
+
+        image_path = prefix.with_suffix(".png")
+        if not image_path.is_file():
+            raise RenderError("renderer produced no image file")
+        data = image_path.read_bytes()
+        image_path.unlink(missing_ok=True)
+        if not data.startswith(PNG_SIGNATURE):
+            raise RenderError("renderer output is not a PNG image")
+        return data

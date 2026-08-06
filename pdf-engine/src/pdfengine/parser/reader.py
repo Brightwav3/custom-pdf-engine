@@ -7,7 +7,7 @@ import zlib
 from dataclasses import dataclass
 from pathlib import Path
 
-from pdfengine.errors import PdfParseError
+from pdfengine.errors import PdfParseError, UnsupportedPdfError
 
 from .tokens import Tokenizer
 from .values import PdfArray, PdfDictionary, PdfName, PdfReference
@@ -40,9 +40,9 @@ class PdfReader:
         xref_offset = self._find_startxref()
         self.trailer = self._read_xref_and_trailer(xref_offset)
         if PdfName("XRefStm") in self.trailer.entries:
-            raise PdfParseError("PDF xref streams are unsupported", xref_offset)
+            raise UnsupportedPdfError("xref stream", xref_offset)
         if PdfName("Encrypt") in self.trailer.entries:
-            raise PdfParseError("PDF encryption is unsupported", xref_offset)
+            raise UnsupportedPdfError("encryption", xref_offset)
 
     def resolve(self, reference: PdfReference) -> object:
         if reference in self._cache:
@@ -66,7 +66,7 @@ class PdfReader:
         absolute_end = header.end() + tokenizer.offset
         if isinstance(value, PdfDictionary):
             if value.entries.get(PdfName("Type")) == PdfName("ObjStm"):
-                raise PdfParseError("PDF object streams are unsupported", offset)
+                raise UnsupportedPdfError("object stream", offset)
             stream = self._read_stream(value, absolute_end)
             if stream is not None:
                 value, absolute_end = stream
@@ -140,7 +140,7 @@ class PdfReader:
                 raise PdfParseError("invalid FlateDecode stream", data_start)
             data = decoded
         elif stream_filter is not None:
-            raise PdfParseError("unsupported stream filter", position)
+            raise UnsupportedPdfError(f"stream filter {stream_filter}", position)
         return PdfStream(dictionary, data), data_end + end_match.end()
 
     def _find_startxref(self) -> int:
@@ -164,7 +164,7 @@ class PdfReader:
                     isinstance(candidate, PdfDictionary)
                     and candidate.entries.get(PdfName("Type")) == PdfName("XRef")
                 ):
-                    raise PdfParseError("PDF xref streams are unsupported", offset)
+                    raise UnsupportedPdfError("xref stream", offset)
             raise PdfParseError("startxref does not point to a classic xref table", offset)
 
         while True:
