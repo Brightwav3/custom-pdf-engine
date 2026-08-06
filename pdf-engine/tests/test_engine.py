@@ -1,0 +1,273 @@
+from __future__ import annotations
+
+from pathlib import Path
+
+import pytest
+
+from pdfengine import PdfEngine
+from pdfengine.api.models import (
+    DeletePages,
+    ImportPages,
+    InsertBlankPage,
+    ReorderPages,
+    RotatePages,
+    SaveOptions,
+    SetMetadata,
+)
+from pdfengine.errors import (
+    InvalidOperationError,
+    PdfEngineError,
+    RenderError,
+    SessionNotFoundError,
+    SourceChangedError,
+)
+
+from conftest import make_png
+from test_rewrite import page_texts
+
+
+class StubRenderer:
+    version = "stub-1"
+
+    def __init__(self, capability_state: str = "ready") -> None:
+        self.capability_state = capability_state
+        self.calls: list[tuple[Path, int, int, str | None]] = []
+
+    def capability(self):
+        from pdfengine.rendering.base import RendererCapability
+
+        return RendererCapability(self.capability_state, "stub")
+
+    def render(self, source, page_index, width, password, output_dir) -> bytes:
+        self.calls.append((Path(source), page_index, width, password))
+        return make_png(width, width * 2)
+
+
+@pytest.fixture
+def renderer() -> StubRenderer:
+    return StubRenderer()
+
+
+@pytest.fixture
+def engine(tmp_path, renderer) -> PdfEngine:
+    engine = PdfEngine(cache_root=tmp_path / "cache", renderer=renderer)
+    yield engine
+    engine.close_all()
+
+
+@pytest.fixture
+def session(engine, write_pdf):
+    return engine.open_document(write_pdf(["alpha", "beta", "gamma"], title="Original"))
+
+
+def test_open_exposes_stable_page_ids_and_geometry(engine, session) -> None:
+    info = engine.inspect_document(session)
+
+    assert info.page_count == 3
+    assert info.title == "Original"
+    assert all(page.page_id.startswith("page_") for page in info.pages)
+    assert [page.source_index for page in info.pages] == [0, 1, 2]
+    assert (info.pages[0].width, info.pages[0].height) == (612.0, 792.0)
+
+
+def test_opening_a_missing_file_is_a_clear_engine_error(engine, tmp_path) -> None:
+    with pytest.raises(PdfEngineError, match="no such PDF file"):
+        engine.open_document(tmp_path / "absent.pdf")
+
+
+def test_edits_project_through_inspection(engine, session) -> None:
+    page_a, page_b, page_c = [page.page_id for page in engine.inspect_document(session).pages]
+
+    engine.apply_operations(session, [ReorderPages((page_c, page_a, page_b))])
+
+    assert [page.page_id for page in engine.inspect_document(session).pages] == [
+        page_c,
+        page_a,
+        page_b,
+    ]
+
+
+def test_a_dry_run_leaves_the_session_untouched(engine, session) -> None:
+    page_a = engine.inspect_document(session).pages[0].page_id
+
+    state = engine.apply_operations(session, [DeletePages((page_a,))], dry_run=True)
+
+    assert len(state.page_ids) == 2
+    assert engine.inspect_document(session).page_count == 3
+
+
+def test_an_invalid_operation_leaves_the_session_untouched(engine, session) -> None:
+    with pytest.raises(InvalidOperationError):
+        engine.apply_operations(session, [RotatePages(("page_missing",), 90)])
+
+    assert engine.inspect_document(session).page_count == 3
+
+
+def test_undo_and_redo_walk_the_session_history(engine, session) -> None:
+    page_a = engine.inspect_document(session).pages[0].page_id
+    engine.apply_operations(session, [DeletePages((page_a,))])
+
+    assert engine.undo(session).page_ids[0] == page_a
+    assert engine.redo(session).page_ids[0] != page_a
+
+
+def test_render_uses_the_source_page_index_and_caches_the_result(
+    engine, session, renderer
+) -> None:
+    page_b = engine.inspect_document(session).pages[1].page_id
+
+    first = engine.render_page(session, page_b, width=120)
+    second = engine.render_page(session, page_b, width=120)
+
+    assert first.image_bytes.startswith(b"\x89PNG\r\n\x1a\n")
+    assert (first.cache_hit, second.cache_hit) == (False, True)
+    assert len(renderer.calls) == 1
+    assert renderer.calls[0][1] == 1
+    assert (first.width, first.height) == (120, 240)
+
+
+def test_rotating_a_page_invalidates_its_cached_preview(engine, session, renderer) -> None:
+    page_a = engine.inspect_document(session).pages[0].page_id
+    engine.render_page(session, page_a, width=120)
+
+    engine.apply_operations(session, [RotatePages((page_a,), 90)])
+    engine.render_page(session, page_a, width=120)
+
+    assert len(renderer.calls) == 2
+
+
+def test_rendering_a_generated_blank_page_is_a_typed_error(engine, session) -> None:
+    blank = InsertBlankPage()
+    engine.apply_operations(session, [blank])
+
+    with pytest.raises(RenderError, match="blank page"):
+        engine.render_page(session, blank.page_id)
+
+
+def test_rendering_an_unknown_page_is_rejected(engine, session) -> None:
+    with pytest.raises(InvalidOperationError, match="unknown page ID"):
+        engine.render_page(session, "page_missing")
+
+
+def test_a_missing_renderer_is_a_blocked_capability_not_a_crash(tmp_path, write_pdf) -> None:
+    engine = PdfEngine(cache_root=tmp_path / "c", renderer=StubRenderer("blocked"))
+    engine.open_document(write_pdf(["a"]))
+
+    capabilities = engine.capabilities()
+
+    assert capabilities["preview"]["state"] == "blocked"
+    assert {entry["kind"] for entry in capabilities["operations"]} >= {
+        "rotate_pages",
+        "delete_pages",
+        "import_pages",
+    }
+
+
+def test_save_writes_a_distinct_file_and_leaves_the_source_alone(engine, session) -> None:
+    before = session.path.read_bytes()
+    page_a = engine.inspect_document(session).pages[0].page_id
+    engine.apply_operations(session, [DeletePages((page_a,))])
+
+    output = engine.save(session)
+
+    assert output != session.path
+    assert output.name.endswith("-edited.pdf")
+    assert session.path.read_bytes() == before
+    assert page_texts(output) == ["beta", "gamma"]
+
+
+def test_repeated_saves_never_clobber_an_earlier_copy(engine, session) -> None:
+    first = engine.save(session)
+    second = engine.save(session)
+
+    assert first != second
+    assert first.exists() and second.exists()
+
+
+def test_a_dry_run_save_writes_nothing(engine, session, tmp_path) -> None:
+    target = tmp_path / "out.pdf"
+
+    result = engine.save(session, target, SaveOptions(dry_run=True))
+
+    assert result == target
+    assert not target.exists()
+
+
+def test_engine_refuses_in_place_save_without_opt_in(engine, session) -> None:
+    with pytest.raises(PdfEngineError, match="allow_replace_source"):
+        engine.save(session, session.path)
+
+
+def test_engine_refuses_in_place_save_after_source_changes(engine, session) -> None:
+    session.path.write_bytes(session.path.read_bytes() + b"\n% changed")
+
+    with pytest.raises(SourceChangedError):
+        engine.save(session, session.path, SaveOptions(allow_replace_source=True))
+
+
+def test_an_opted_in_in_place_save_replaces_the_source(engine, session) -> None:
+    page_a = engine.inspect_document(session).pages[0].page_id
+    engine.apply_operations(session, [DeletePages((page_a,))])
+
+    output = engine.save(session, session.path, SaveOptions(allow_replace_source=True))
+
+    assert output == session.path
+    assert page_texts(session.path) == ["beta", "gamma"]
+    assert session.source_changed() is False
+
+
+def test_saving_into_a_missing_directory_is_rejected(engine, session, tmp_path) -> None:
+    with pytest.raises(PdfEngineError, match="output directory"):
+        engine.save(session, tmp_path / "absent" / "out.pdf")
+
+
+def test_metadata_edits_reach_the_saved_copy(engine, session) -> None:
+    engine.apply_operations(session, [SetMetadata({"title": "Renamed"})])
+
+    output = engine.save(session)
+
+    other = engine.open_document(output)
+    assert engine.inspect_document(other).title == "Renamed"
+
+
+def test_pages_import_across_two_open_sessions(engine, session, write_pdf) -> None:
+    other = engine.open_document(write_pdf(["from second document"]))
+    imported_id = engine.inspect_document(other).pages[0].page_id
+
+    engine.apply_operations(
+        session, [ImportPages(other.session_id, (imported_id,))]
+    )
+    output = engine.save(session)
+
+    assert page_texts(output)[-1] == "from second document"
+
+
+def test_importing_from_an_unknown_session_is_rejected(engine, session) -> None:
+    with pytest.raises(SessionNotFoundError, match="import source"):
+        engine.apply_operations(session, [ImportPages("session_absent", ("page_x",))])
+
+
+def test_close_drops_the_password_and_deletes_the_cache(engine, write_pdf) -> None:
+    session = engine.open_document(write_pdf(["a"]), password="secret")
+    page_id = engine.inspect_document(session).pages[0].page_id
+    engine.render_page(session, page_id, width=40)
+    cache_dir = session.cache_dir
+    assert list(cache_dir.glob("*.png"))
+
+    engine.close(session)
+
+    assert session.password is None
+    assert not cache_dir.exists()
+    with pytest.raises(SessionNotFoundError):
+        engine.inspect_document(session)
+
+
+def test_the_password_is_never_written_to_disk(engine, write_pdf, renderer) -> None:
+    session = engine.open_document(write_pdf(["a"]), password="hunter2")
+    page_id = engine.inspect_document(session).pages[0].page_id
+
+    engine.render_page(session, page_id, width=40)
+
+    assert renderer.calls[0][3] == "hunter2"
+    assert "hunter2" not in repr(session)
+    assert all(b"hunter2" not in f.read_bytes() for f in session.cache_dir.glob("*"))
