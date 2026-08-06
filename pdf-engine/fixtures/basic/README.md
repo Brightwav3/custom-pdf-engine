@@ -9,6 +9,7 @@ fixture under 20 KiB and record what it is for here.
 | File | Size | Feature it pins down |
 | --- | --- | --- |
 | `one-page.pdf` | 662 B | The happy path: classic xref, one page, `/Info /Title`, an uncompressed content stream, and a Type1 font resource. Expected facts: 1 page, 612 × 792, rotation 0, title `One page fixture`. |
+| `with-image.pdf` | 1088 B | A filter the engine cannot decode. One 200 × 200 page draws an 8 × 8 `/DCTDecode` image `/XObject` through its content stream. Expected facts: 1 page, the image stream reads without error, `is_decodable` is false, `residual_filters` is `(/DCTDecode,)`, and `.data` raises. Saving must copy the JPEG bytes across verbatim — a writer that re-encodes stream bodies corrupts this file. |
 | `inherited-pages.pdf` | 815 B | Inheritance. `/MediaBox`, `/Rotate`, and `/Resources` live only on the `/Pages` node, and the second leaf adds its own `/CropBox`. Expected facts: 2 pages, 595 × 842 rotated 90 and 300 × 400 rotated 90. A reader that ignores inheritance gets both pages wrong. |
 
 ## `unsupported/`

@@ -88,7 +88,11 @@ not**. Always address pages by `pageId`.
   "capabilities": {
     "preview": {"state":"ready","detail":""},
     "operations": [{"kind":"rotate_pages","safe":true,"requires":[],"schema":"operation-request.json"}],
-    "save": {"fullRewriteOnly": true, "inPlaceRequiresOptIn": true}
+    "save": {"fullRewriteOnly": true, "inPlaceRequiresOptIn": true},
+    "read": {
+      "structuralEdit": {"state":"ready","detail":""},
+      "textContent": {"state":"ready","detail":"","filters":[],"objectCount":0}
+    }
   },
   "nextActions": ["inspect","render","apply","save","close"]
 }
@@ -96,6 +100,48 @@ not**. Always address pages by `pageId`.
 
 Check `capabilities.preview.state` before rendering: `ready`, `blocked`
 (Poppler is not installed — everything else still works), or `error`.
+
+#### Reading is not the same capability as editing
+
+`capabilities.read` answers a question the other sections do not: what can this
+particular document be *read* for, as opposed to rearranged? The two come apart,
+so they are reported apart.
+
+- **`structuralEdit`** — reorder, delete, rotate, crop, import, save. Always
+  `ready` for any document that opened at all. These operations copy stream
+  bytes through untouched, so they never need to understand them.
+- **`textContent`** — anything that must look *inside* those bytes. `blocked`
+  when the document's pages reach a stream whose filters this version cannot
+  decode, with `filters` naming them and `objectCount` counting the distinct
+  stream objects involved.
+
+The section is only present when the response describes an open session; a bare
+`capabilities` command has no document to describe and omits it.
+
+A scanned contract — every page one big JPEG — reports:
+
+```json
+"read": {
+  "structuralEdit": {"state":"ready","detail":""},
+  "textContent": {
+    "state":"blocked",
+    "detail":"12 streams use filters this version cannot decode",
+    "filters":["DCTDecode"],
+    "objectCount":12
+  }
+}
+```
+
+Read that as: *dropping page 7 and saving will work perfectly; asking for the
+text on page 7 will not.* An agent asked to "remove the signature page and send
+it back" should proceed. An agent asked to "find the termination clause" should
+stop here and say the document is scanned rather than report that it found
+nothing — those are very different answers.
+
+`DCTDecode` is the common case, but `filters` is not a fixed list: `FlateDecode`
+itself appears there when the stream carries a `/Predictor`, since inflating it
+alone yields un-predicted bytes. Treat any non-empty `filters` as "cannot read
+this", and never special-case a particular name.
 
 ### 2. Preview
 

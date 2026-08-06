@@ -19,7 +19,7 @@ from pdfengine.document import DocumentModel
 from pdfengine.editing import DocumentState
 from pdfengine.errors import PdfEngineError
 from pdfengine.parser.reader import PdfReader, PdfStream
-from pdfengine.parser.values import PdfDictionary, PdfName
+from pdfengine.parser.values import PdfDictionary, PdfName, PdfReference
 from pdfengine.writing import FullRewriteWriter
 
 
@@ -183,6 +183,52 @@ def test_a_missing_output_directory_is_rejected(source, tmp_path) -> None:
 
     with pytest.raises(PdfEngineError, match="output directory"):
         save(state, readers, tmp_path / "absent" / "e.pdf")
+
+
+def _streams(path: Path) -> list[PdfStream]:
+    """Every stream reachable by object number in a document, in order."""
+
+    reader = PdfReader(path)
+    found = []
+    for number in range(1, reader.trailer.entries[PdfName("Size")]):
+        try:
+            value = reader.resolve(PdfReference(number, 0))
+        except PdfEngineError:
+            continue
+        if isinstance(value, PdfStream):
+            found.append(value)
+    return found
+
+
+def test_an_unedited_save_reproduces_every_stream_body_byte_for_byte(
+    source, tmp_path
+) -> None:
+    state, readers = open_state(source)
+
+    output = save(state, readers, tmp_path / "copy.pdf")
+
+    before = [stream.raw for stream in _streams(source)]
+    after = [stream.raw for stream in _streams(output)]
+    assert before
+    assert after == before
+
+
+def test_an_undecodable_image_survives_a_reorder_unchanged(tmp_path) -> None:
+    fixture = Path(__file__).resolve().parents[1] / "fixtures" / "basic" / "with-image.pdf"
+
+    def image_bytes(path: Path) -> bytes:
+        reader = PdfReader(path)
+        model = DocumentModel.from_reader(reader)
+        page = reader.resolve(model.pages[0].reference)
+        xobjects = page.entries[PdfName("Resources")].entries[PdfName("XObject")]
+        image = reader.resolve(xobjects.entries[PdfName("Im0")])
+        assert image.residual_filters == (PdfName("DCTDecode"),)
+        return image.raw
+
+    state, readers = open_state(fixture)
+    output = save(state.apply(ReorderPages(state.page_ids)), readers, tmp_path / "e.pdf")
+
+    assert image_bytes(output) == image_bytes(fixture)
 
 
 def test_no_temporary_file_survives_a_successful_save(source, tmp_path) -> None:

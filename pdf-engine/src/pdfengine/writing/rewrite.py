@@ -10,7 +10,6 @@ output is staged in a sibling temporary file, fsynced, reopened through
 from __future__ import annotations
 
 import os
-import zlib
 from pathlib import Path
 from typing import Mapping
 
@@ -120,27 +119,23 @@ class _Graph:
                 }
             )
         if isinstance(value, PdfStream):
-            return _compress(
-                PdfDictionary(
-                    {
-                        name: self.rewrite(session, reader, item)
-                        for name, item in value.dictionary.entries.items()
-                        if name.value not in ("Length", "Filter", "DecodeParms")
-                    }
-                ),
-                value.data,
+            # Streams are copied verbatim. Re-encoding a body this engine
+            # never decoded would corrupt it, and re-encoding one it did
+            # decode would needlessly churn bytes the user did not edit, so
+            # /Filter and /DecodeParms travel with the raw bytes unchanged.
+            entries: dict[PdfName, object] = {
+                name: self.rewrite(session, reader, item)
+                for name, item in value.dictionary.entries.items()
+                if name.value != "Length"
+            }
+            entries[PdfName("Length")] = len(value.raw)
+            return PdfStream(
+                PdfDictionary(entries),
+                value.raw,
+                value.filters,
+                value.decode_parms,
             )
         return value
-
-
-def _compress(dictionary: PdfDictionary, data: bytes) -> PdfStream:
-    """Re-emit a stream body as Flate, which the reader always accepts."""
-
-    body = zlib.compress(data)
-    entries = dict(dictionary.entries)
-    entries[PdfName("Filter")] = PdfName("FlateDecode")
-    entries[PdfName("Length")] = len(body)
-    return PdfStream(PdfDictionary(entries), body)
 
 
 def _build(
@@ -241,7 +236,7 @@ def _blank_page(graph: _Graph, page: ProjectedPage) -> PdfDictionary:
 
 def _blank_contents(graph: _Graph) -> int:
     number = graph.allocate()
-    graph.objects[number] = _compress(PdfDictionary({}), b"")
+    graph.objects[number] = PdfStream(PdfDictionary({PdfName("Length"): 0}), b"")
     return number
 
 
@@ -326,7 +321,7 @@ def _serialize(value: object) -> bytes:
         return b"<< " + parts + b" >>" if parts else b"<< >>"
     if isinstance(value, PdfStream):
         return (
-            _serialize(value.dictionary) + b"\nstream\n" + value.data + b"\nendstream"
+            _serialize(value.dictionary) + b"\nstream\n" + value.raw + b"\nendstream"
         )
     raise PdfEngineError(f"cannot serialize value of type {type(value).__name__}")
 

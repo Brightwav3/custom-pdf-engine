@@ -6,6 +6,7 @@ import pytest
 
 from pdfengine import PdfEngine
 from pdfengine.api.models import (
+    CropPages,
     DeletePages,
     ImportPages,
     InsertBlankPage,
@@ -17,7 +18,6 @@ from pdfengine.api.models import (
 from pdfengine.errors import (
     InvalidOperationError,
     PdfEngineError,
-    RenderError,
     SessionNotFoundError,
     SourceChangedError,
 )
@@ -41,6 +41,28 @@ class StubRenderer:
     def render(self, source, page_index, width, password, output_dir) -> bytes:
         self.calls.append((Path(source), page_index, width, password))
         return make_png(width, width * 2)
+
+
+class GeometryRenderer:
+    """Render a PNG whose pixel size mirrors the real geometry of the page.
+
+    Unlike ``StubRenderer`` this reads the file it is handed, so a preview that
+    was produced from the wrong file is visible in the pixels.
+    """
+
+    version = "geometry-1"
+
+    def render(self, source, page_index, width, password, output_dir) -> bytes:
+        from pdfengine.document.pages import DocumentModel
+        from pdfengine.parser.reader import PdfReader
+
+        page = DocumentModel.from_reader(PdfReader(Path(source))).pages[page_index]
+        box = page.crop_box or page.media_box
+        page_width = int(round(box[2] - box[0]))
+        page_height = int(round(box[3] - box[1]))
+        if page.info.rotation in (90, 270):
+            page_width, page_height = page_height, page_width
+        return make_png(page_width, page_height)
 
 
 @pytest.fixture
@@ -126,22 +148,98 @@ def test_render_uses_the_source_page_index_and_caches_the_result(
     assert (first.width, first.height) == (120, 240)
 
 
-def test_rotating_a_page_invalidates_its_cached_preview(engine, session, renderer) -> None:
-    page_a = engine.inspect_document(session).pages[0].page_id
-    engine.render_page(session, page_a, width=120)
+def test_rotating_a_page_changes_the_previewed_pixels(tmp_path, write_pdf) -> None:
+    """The preview must carry the rotation, not just miss the cache."""
 
-    engine.apply_operations(session, [RotatePages((page_a,), 90)])
-    engine.render_page(session, page_a, width=120)
+    engine = PdfEngine(cache_root=tmp_path / "cache", renderer=GeometryRenderer())
+    try:
+        session = engine.open_document(write_pdf(["alpha", "beta"]))
+        page_a = engine.inspect_document(session).pages[0].page_id
 
-    assert len(renderer.calls) == 2
+        before = engine.render_page(session, page_a, width=120)
+        engine.apply_operations(session, [RotatePages((page_a,), 90)])
+        after = engine.render_page(session, page_a, width=120)
+
+        assert (before.width, before.height) == (612, 792)
+        assert (after.width, after.height) == (792, 612)
+    finally:
+        engine.close_all()
 
 
-def test_rendering_a_generated_blank_page_is_a_typed_error(engine, session) -> None:
+def test_cropping_a_page_changes_the_previewed_pixels(tmp_path, write_pdf) -> None:
+    engine = PdfEngine(cache_root=tmp_path / "cache", renderer=GeometryRenderer())
+    try:
+        session = engine.open_document(write_pdf(["alpha"]))
+        page_a = engine.inspect_document(session).pages[0].page_id
+        before = engine.render_page(session, page_a, width=120)
+
+        engine.apply_operations(session, [CropPages((page_a,), (0, 0, 300, 400))])
+        after = engine.render_page(session, page_a, width=120)
+
+        assert (before.width, before.height) == (612, 792)
+        assert (after.width, after.height) == (300, 400)
+    finally:
+        engine.close_all()
+
+
+def test_a_generated_blank_page_renders(engine, session, renderer) -> None:
     blank = InsertBlankPage()
     engine.apply_operations(session, [blank])
 
-    with pytest.raises(RenderError, match="blank page"):
-        engine.render_page(session, blank.page_id)
+    result = engine.render_page(session, blank.page_id, width=60)
+
+    assert result.image_bytes.startswith(b"\x89PNG\r\n\x1a\n")
+    assert renderer.calls[0][1] == 0
+
+
+def test_an_imported_page_renders_from_the_edited_document(
+    engine, session, write_pdf, renderer
+) -> None:
+    other = engine.open_document(write_pdf(["from second document"]))
+    imported_id = engine.inspect_document(other).pages[0].page_id
+    engine.apply_operations(session, [ImportPages(other.session_id, (imported_id,))])
+
+    result = engine.render_page(session, imported_id, width=60)
+
+    assert result.image_bytes.startswith(b"\x89PNG\r\n\x1a\n")
+    # Rendered from the materialized edit, at its position there — not from
+    # the other session's own file.
+    assert renderer.calls[0][0].parent == session.cache_dir
+    assert renderer.calls[0][1] == 3
+
+
+def test_an_unedited_document_previews_without_materializing_anything(
+    engine, session
+) -> None:
+    page_a = engine.inspect_document(session).pages[0].page_id
+
+    engine.render_page(session, page_a, width=60)
+
+    assert not list(session.cache_dir.glob("state-*.pdf"))
+
+
+def test_many_previews_of_one_edit_materialize_a_single_file(engine, session) -> None:
+    pages = [page.page_id for page in engine.inspect_document(session).pages]
+    engine.apply_operations(session, [RotatePages((pages[0],), 90)])
+
+    for page_id in pages:
+        engine.render_thumbnail(session, page_id)
+
+    assert len(list(session.cache_dir.glob("state-*.pdf"))) == 1
+
+
+def test_a_second_edit_prunes_the_previous_materialized_state(engine, session) -> None:
+    pages = [page.page_id for page in engine.inspect_document(session).pages]
+    engine.apply_operations(session, [RotatePages((pages[0],), 90)])
+    engine.render_page(session, pages[0], width=60)
+    first = list(session.cache_dir.glob("state-*.pdf"))
+
+    engine.apply_operations(session, [DeletePages((pages[1],))])
+    engine.render_page(session, pages[0], width=60)
+    second = list(session.cache_dir.glob("state-*.pdf"))
+
+    assert len(first) == len(second) == 1
+    assert first != second
 
 
 def test_rendering_an_unknown_page_is_rejected(engine, session) -> None:
@@ -248,11 +346,13 @@ def test_importing_from_an_unknown_session_is_rejected(engine, session) -> None:
 
 
 def test_close_drops_the_password_and_deletes_the_cache(engine, write_pdf) -> None:
-    session = engine.open_document(write_pdf(["a"]), password="secret")
+    session = engine.open_document(write_pdf(["a", "b"]), password="secret")
     page_id = engine.inspect_document(session).pages[0].page_id
+    engine.apply_operations(session, [RotatePages((page_id,), 90)])
     engine.render_page(session, page_id, width=40)
     cache_dir = session.cache_dir
     assert list(cache_dir.glob("*.png"))
+    assert list(cache_dir.glob("state-*.pdf"))
 
     engine.close(session)
 
@@ -271,3 +371,105 @@ def test_the_password_is_never_written_to_disk(engine, write_pdf, renderer) -> N
     assert renderer.calls[0][3] == "hunter2"
     assert "hunter2" not in repr(session)
     assert all(b"hunter2" not in f.read_bytes() for f in session.cache_dir.glob("*"))
+
+
+# -- read capability ------------------------------------------------------
+
+
+WITH_IMAGE = Path(__file__).resolve().parents[1] / "fixtures" / "basic" / "with-image.pdf"
+
+
+@pytest.fixture
+def image_pdf(tmp_path) -> Path:
+    """A copy of the JPEG fixture, so a test that saves cannot touch the original."""
+
+    target = tmp_path / "with-image.pdf"
+    target.write_bytes(WITH_IMAGE.read_bytes())
+    return target
+
+
+def test_a_jpeg_document_can_be_restructured_but_not_read(engine, image_pdf) -> None:
+    session = engine.open_document(image_pdf)
+
+    read = engine.capabilities(session)["read"]
+
+    assert read["structuralEdit"] == {"state": "ready", "detail": ""}
+    assert read["textContent"]["state"] == "blocked"
+    assert read["textContent"]["filters"] == ["DCTDecode"]
+    assert read["textContent"]["objectCount"] == 1
+    assert "cannot decode" in read["textContent"]["detail"]
+
+
+def test_a_clean_document_reports_every_read_capability_ready(engine, session) -> None:
+    read = engine.capabilities(session)["read"]
+
+    assert read["structuralEdit"]["state"] == "ready"
+    assert read["textContent"] == {
+        "state": "ready",
+        "detail": "",
+        "filters": [],
+        "objectCount": 0,
+    }
+
+
+def test_capabilities_without_a_session_describe_no_document(engine) -> None:
+    capabilities = engine.capabilities()
+
+    assert "read" not in capabilities
+    assert capabilities["preview"]["state"] == "ready"
+
+
+def test_the_undecodable_survey_runs_once_and_is_reused(
+    engine, image_pdf, monkeypatch
+) -> None:
+    from pdfengine.document.pages import DocumentModel
+
+    calls = []
+    original = DocumentModel.undecodable_streams
+
+    def spy(self, reader):
+        calls.append(reader)
+        return original(self, reader)
+
+    monkeypatch.setattr(DocumentModel, "undecodable_streams", spy)
+    session = engine.open_document(image_pdf)
+
+    first = engine.capabilities(session)["read"]
+    second = engine.capabilities(session)["read"]
+
+    assert first == second
+    assert len(calls) == 1
+
+
+def test_opening_a_document_does_not_pay_for_the_survey(engine, image_pdf) -> None:
+    session = engine.open_document(image_pdf)
+
+    assert session.undecodable_survey is None
+
+    engine.capabilities(session)
+
+    assert session.undecodable_survey is not None
+
+
+def test_a_jpeg_document_still_reorders_saves_and_reopens(
+    engine, image_pdf, tmp_path, write_pdf
+) -> None:
+    session = engine.open_document(image_pdf)
+    extra = engine.open_document(write_pdf(["appended"]))
+    imported = [page.page_id for page in engine.inspect_document(extra).pages]
+    engine.apply_operations(
+        session,
+        [ImportPages(source_session_id=extra.session_id, page_ids=imported)],
+    )
+    order = [page.page_id for page in engine.inspect_document(session).pages]
+    engine.apply_operations(session, [ReorderPages(page_ids=list(reversed(order)))])
+
+    target = engine.save(session, tmp_path / "restructured.pdf")
+    reopened = engine.open_document(target)
+
+    assert engine.inspect_document(reopened).page_count == 2
+    # The JPEG rode through the rewrite, so the reopened copy is still unreadable
+    # for the same reason — which is exactly the point: the edit needed no decode.
+    assert engine.capabilities(reopened)["read"]["textContent"]["filters"] == [
+        "DCTDecode"
+    ]

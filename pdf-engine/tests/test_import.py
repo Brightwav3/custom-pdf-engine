@@ -118,7 +118,13 @@ def test_saving_an_import_without_its_reader_is_a_clear_failure(
         )
 
 
-def test_a_document_using_an_unsupported_construct_cannot_be_imported(tmp_path) -> None:
+def test_a_document_using_an_undecodable_filter_is_copied_verbatim(tmp_path) -> None:
+    """A filter this engine cannot decode must not block a save.
+
+    The bytes are opaque to us, so they are moved across untouched rather
+    than re-encoded — which is the only honest thing to do with them.
+    """
+
     path = tmp_path / "lzw.pdf"
     path.write_bytes(
         assemble_pdf(
@@ -131,9 +137,15 @@ def test_a_document_using_an_unsupported_construct_cannot_be_imported(tmp_path) 
         )
     )
 
-    from pdfengine.errors import UnsupportedPdfError
-
     model, reader = _open(path, "s-a")
     state = DocumentState.from_model(model, session_id="s-a")
-    with pytest.raises(UnsupportedPdfError, match="stream filter"):
-        FullRewriteWriter().write(state, {"s-a": reader}, tmp_path / "o.pdf", SaveOptions())
+    output = FullRewriteWriter().write(
+        state, {"s-a": reader}, tmp_path / "o.pdf", SaveOptions()
+    )
+
+    copied_reader = PdfReader(output)
+    copied_model = DocumentModel.from_reader(copied_reader)
+    page = copied_reader.resolve(copied_model.pages[0].reference)
+    contents = copied_reader.resolve(page.entries[PdfName("Contents")])
+    assert contents.raw == b"raw"
+    assert contents.residual_filters == (PdfName("LZWDecode"),)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tempfile
+from hashlib import sha256
 from pathlib import Path
 from typing import Iterable, Sequence
 
@@ -10,7 +11,6 @@ from pdfengine.editing.state import DocumentState, ProjectedPage
 from pdfengine.errors import (
     InvalidOperationError,
     PdfEngineError,
-    RenderError,
     SessionNotFoundError,
     SourceChangedError,
 )
@@ -105,7 +105,7 @@ class PdfEngine:
 
     def capabilities(self, session: DocumentSession | str | None = None) -> dict:
         preview = self.renderer_capability()
-        return {
+        capabilities = {
             "preview": {"state": preview.state, "detail": preview.detail},
             "operations": [
                 {
@@ -118,6 +118,43 @@ class PdfEngine:
             ],
             "save": {"fullRewriteOnly": True, "inPlaceRequiresOptIn": True},
         }
+        if session is not None:
+            capabilities["read"] = self._read_capability(self._as_session(session))
+        return capabilities
+
+    def _read_capability(self, session: DocumentSession) -> dict:
+        """Describe what this document can be *read* for, not just edited into.
+
+        Structural edits copy stream bytes through untouched, so they work on
+        any document the engine could open. Anything that needs to look inside
+        those bytes does not, and a caller deserves to learn that before it
+        tries rather than by catching an error halfway through.
+        """
+
+        filters, count = self._undecodable_survey(session)
+        if count:
+            subject = "stream uses" if count == 1 else "streams use"
+            text = {
+                "state": "blocked",
+                "detail": f"{count} {subject} filters this version cannot decode",
+                "filters": [name.value for name in filters],
+                "objectCount": count,
+            }
+        else:
+            text = {"state": "ready", "detail": "", "filters": [], "objectCount": 0}
+        return {
+            "structuralEdit": {"state": "ready", "detail": ""},
+            "textContent": text,
+        }
+
+    def _undecodable_survey(
+        self, session: DocumentSession
+    ) -> tuple[tuple[object, ...], int]:
+        if session.undecodable_survey is None:
+            session.undecodable_survey = session.model.undecodable_streams(
+                session.reader
+            )
+        return session.undecodable_survey
 
     # -- rendering -------------------------------------------------------
 
@@ -128,20 +165,18 @@ class PdfEngine:
         width: int = DEFAULT_PREVIEW_WIDTH,
     ) -> RenderResult:
         session = self._as_session(session)
-        page = self._projected_page(session, page_id)
-        if page.is_blank:
-            raise RenderError(f"page {page_id} is a generated blank page with no source")
+        self._projected_page(session, page_id)  # reject unknown page IDs early
 
-        origin = self._origin_session(session, page)
+        source, indices, state_hash = self._preview_source(session)
         cache = RenderCache(session.cache_dir)
         return cache.get_or_render(
-            fingerprint=f"{origin.fingerprint.digest}:{page.rotation}:{page.crop_box}",
+            fingerprint=state_hash,
             page_id=page_id,
             width=width,
             renderer=self._renderer,
-            source=origin.path,
-            page_index=page.source.info.index if page.source else 0,
-            password=origin.password,
+            source=source,
+            page_index=indices[page_id],
+            password=session.password,
         )
 
     def render_thumbnail(
@@ -218,11 +253,7 @@ class PdfEngine:
         if options.dry_run:
             return target
 
-        readers = {}
-        for page in session.state.projected_pages():
-            origin_id = page.source_session_id
-            if origin_id is not None and origin_id not in readers:
-                readers[origin_id] = self._origin_session(session, page).reader
+        readers = self._readers_for(session)
 
         write_options = SaveOptions(
             output_path=target,
@@ -241,6 +272,63 @@ class PdfEngine:
         if session.closed:
             raise SessionNotFoundError(f"session is closed: {session.session_id}")
         return session
+
+    def _readers_for(self, session: DocumentSession) -> dict:
+        readers: dict = {}
+        for page in session.state.projected_pages():
+            origin_id = page.source_session_id
+            if origin_id is not None and origin_id not in readers:
+                readers[origin_id] = self._origin_session(session, page).reader
+        return readers
+
+    def _preview_source(
+        self, session: DocumentSession
+    ) -> tuple[Path, dict[str, int], str]:
+        """Return (file to render, page_id -> page index in that file, state hash).
+
+        An unedited session previews straight from its own file: nothing is
+        written. Once an edit exists, the projected state is materialized once
+        per distinct state, so what is previewed is exactly what a save writes —
+        rotation, crop, blank pages and imported pages included.
+        """
+
+        state = session.state
+        if state.cursor == 0:
+            return (
+                session.path,
+                {
+                    page.page_id: page.source.info.index
+                    for page in state.projected_pages()
+                    if page.source is not None
+                },
+                session.fingerprint.digest,
+            )
+
+        # Imported here so the writer's own imports stay off the hot open path.
+        from pdfengine.writing.rewrite import FullRewriteWriter
+
+        identity = sha256(session.fingerprint.digest.encode("utf-8"))
+        for operation in state.operations[: state.cursor]:
+            identity.update(b"\0")
+            identity.update(repr(operation).encode("utf-8"))
+        state_hash = identity.hexdigest()
+
+        target = session.cache_dir / f"state-{state_hash}.pdf"
+        if not target.is_file():
+            FullRewriteWriter().write(
+                state,
+                self._readers_for(session),
+                target,
+                SaveOptions(output_path=target, allow_replace_source=True),
+            )
+        for stale in session.cache_dir.glob("state-*.pdf"):
+            if stale != target:
+                stale.unlink(missing_ok=True)
+
+        indices = {
+            page.page_id: index for index, page in enumerate(state.projected_pages())
+        }
+        return target, indices, state_hash
 
     def _projected_page(
         self, session: DocumentSession, page_id: str
