@@ -70,6 +70,44 @@
           }
         }
       }
+    },
+    "read": {
+      "type": "object",
+      "description": "What this document can be read for, as opposed to edited into. Present only when a response describes an open session, because it describes a specific document.",
+      "required": ["structuralEdit", "textContent"],
+      "properties": {
+        "structuralEdit": {
+          "type": "object",
+          "description": "Reordering, deleting, rotating, cropping, importing and saving. Always ready: these copy stream bytes through without decoding them.",
+          "required": ["state", "detail"],
+          "properties": {
+            "state": { "type": "string", "enum": ["ready", "blocked"] },
+            "detail": { "type": "string" }
+          }
+        },
+        "textContent": {
+          "type": "object",
+          "description": "Anything that must look inside stream bytes. Blocked when the pages reach a stream whose filters this version cannot decode.",
+          "required": ["state", "detail", "filters", "objectCount"],
+          "properties": {
+            "state": { "type": "string", "enum": ["ready", "blocked"] },
+            "detail": {
+              "type": "string",
+              "description": "Human-readable reason when blocked, empty when ready."
+            },
+            "filters": {
+              "type": "array",
+              "description": "Sorted distinct names of the filters that could not be decoded. Empty when ready.",
+              "items": { "type": "string" }
+            },
+            "objectCount": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Distinct stream objects carrying those filters. Zero when ready."
+            }
+          }
+        }
+      }
     }
   }
 }

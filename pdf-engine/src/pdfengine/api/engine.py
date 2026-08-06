@@ -105,7 +105,7 @@ class PdfEngine:
 
     def capabilities(self, session: DocumentSession | str | None = None) -> dict:
         preview = self.renderer_capability()
-        return {
+        capabilities = {
             "preview": {"state": preview.state, "detail": preview.detail},
             "operations": [
                 {
@@ -118,6 +118,43 @@ class PdfEngine:
             ],
             "save": {"fullRewriteOnly": True, "inPlaceRequiresOptIn": True},
         }
+        if session is not None:
+            capabilities["read"] = self._read_capability(self._as_session(session))
+        return capabilities
+
+    def _read_capability(self, session: DocumentSession) -> dict:
+        """Describe what this document can be *read* for, not just edited into.
+
+        Structural edits copy stream bytes through untouched, so they work on
+        any document the engine could open. Anything that needs to look inside
+        those bytes does not, and a caller deserves to learn that before it
+        tries rather than by catching an error halfway through.
+        """
+
+        filters, count = self._undecodable_survey(session)
+        if count:
+            subject = "stream uses" if count == 1 else "streams use"
+            text = {
+                "state": "blocked",
+                "detail": f"{count} {subject} filters this version cannot decode",
+                "filters": [name.value for name in filters],
+                "objectCount": count,
+            }
+        else:
+            text = {"state": "ready", "detail": "", "filters": [], "objectCount": 0}
+        return {
+            "structuralEdit": {"state": "ready", "detail": ""},
+            "textContent": text,
+        }
+
+    def _undecodable_survey(
+        self, session: DocumentSession
+    ) -> tuple[tuple[object, ...], int]:
+        if session.undecodable_survey is None:
+            session.undecodable_survey = session.model.undecodable_streams(
+                session.reader
+            )
+        return session.undecodable_survey
 
     # -- rendering -------------------------------------------------------
 

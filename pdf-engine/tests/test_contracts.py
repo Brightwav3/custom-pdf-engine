@@ -284,3 +284,39 @@ def test_every_declared_schema_is_valid_json(name: str) -> None:
 def test_an_unknown_schema_is_rejected() -> None:
     with pytest.raises(InvalidRequestError, match="unknown schema"):
         schema_bytes("nope")
+
+
+def test_open_reports_read_capability_for_a_clean_document(opened) -> None:
+    read = opened["capabilities"]["read"]
+
+    assert read["structuralEdit"] == {"state": "ready", "detail": ""}
+    assert read["textContent"] == {
+        "state": "ready",
+        "detail": "",
+        "filters": [],
+        "objectCount": 0,
+    }
+
+
+def test_open_reports_blocked_text_content_for_a_scanned_document(
+    dispatcher, tmp_path
+) -> None:
+    from test_engine import WITH_IMAGE
+
+    source = tmp_path / "scanned.pdf"
+    source.write_bytes(WITH_IMAGE.read_bytes())
+
+    result = dispatcher.dispatch(request("open", path=str(source)))["result"]
+    read = result["capabilities"]["read"]
+
+    assert read["structuralEdit"]["state"] == "ready"
+    assert read["textContent"]["state"] == "blocked"
+    assert read["textContent"]["filters"] == ["DCTDecode"]
+    assert read["textContent"]["objectCount"] == 1
+    assert read["textContent"]["detail"]
+
+
+def test_a_bare_capabilities_command_describes_no_document(dispatcher) -> None:
+    result = dispatcher.dispatch(request("capabilities"))["result"]
+
+    assert "read" not in result["capabilities"]

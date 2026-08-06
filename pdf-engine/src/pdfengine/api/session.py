@@ -11,6 +11,7 @@ from uuid import uuid4
 from pdfengine.document.pages import DocumentModel
 from pdfengine.editing.state import DocumentState
 from pdfengine.parser.reader import PdfReader
+from pdfengine.parser.values import PdfName
 
 
 _SAMPLE_BYTES = 65536
@@ -59,6 +60,15 @@ class DocumentSession:
     cache_dir: Path
     password: str | None = field(default=None, repr=False)
     closed: bool = False
+    undecodable_survey: tuple[tuple[PdfName, ...], int] | None = field(
+        default=None, repr=False
+    )
+    """Cached result of :meth:`DocumentModel.undecodable_streams`.
+
+    ``None`` means the walk has not run yet. It is populated on the first
+    capability request rather than at open time, so opening a large scanned
+    document does not pay for a survey nobody asked for.
+    """
 
     @classmethod
     def open(

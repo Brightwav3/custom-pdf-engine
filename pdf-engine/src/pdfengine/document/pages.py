@@ -6,9 +6,15 @@ from dataclasses import dataclass
 from uuid import uuid4
 
 from pdfengine.api.models import DocumentInfo, PageInfo
-from pdfengine.errors import PdfParseError
+from pdfengine.errors import PdfEngineError, PdfParseError
 from pdfengine.parser.reader import PdfReader
-from pdfengine.parser.values import PdfArray, PdfDictionary, PdfName, PdfReference
+from pdfengine.parser.values import (
+    PdfArray,
+    PdfDictionary,
+    PdfName,
+    PdfReference,
+    PdfStream,
+)
 
 from .metadata import extract_title
 
@@ -66,6 +72,71 @@ class DocumentModel:
                 page_count=len(records), pages=page_infos, title=extract_title(reader)
             ),
         )
+
+    def undecodable_streams(self, reader: PdfReader) -> tuple[tuple[PdfName, ...], int]:
+        """Survey the page graph for streams this version cannot decode.
+
+        Returns the sorted distinct residual filter names and how many distinct
+        stream objects carry them. Only what the pages actually reach is
+        visited — never the whole object table — and each source object counts
+        once however many pages share it. This is deliberately not called from
+        :meth:`from_reader`: opening a large scanned document must stay cheap.
+        """
+
+        visited: set[PdfReference] = set()
+        # Hold the counted streams, not just their ids, so no id is ever reused
+        # by a later object and silently collapses two streams into one.
+        counted: list[PdfStream] = []
+        counted_ids: set[int] = set()
+        names: set[str] = set()
+
+        pending: list[object] = []
+        for record in self.pages:
+            if record.reference is not None:
+                page = _safe_resolve(reader, record.reference)
+                visited.add(record.reference)
+                if isinstance(page, PdfDictionary):
+                    contents = page.entries.get(PdfName("Contents"))
+                    if contents is not None:
+                        pending.append(contents)
+            if record.resources is not None:
+                pending.append(record.resources)
+
+        while pending:
+            value = pending.pop()
+            if isinstance(value, PdfReference):
+                if value in visited:
+                    continue
+                visited.add(value)
+                value = _safe_resolve(reader, value)
+            if isinstance(value, PdfStream):
+                if value.residual_filters and id(value) not in counted_ids:
+                    counted_ids.add(id(value))
+                    counted.append(value)
+                    names.update(name.value for name in value.residual_filters)
+                # A form XObject carries its own /Resources inside its
+                # dictionary, so the graph continues through it.
+                pending.append(value.dictionary)
+            elif isinstance(value, PdfDictionary):
+                pending.extend(value.entries.values())
+            elif isinstance(value, PdfArray):
+                pending.extend(value.items)
+
+        return tuple(PdfName(name) for name in sorted(names)), len(counted)
+
+
+def _safe_resolve(reader: PdfReader, reference: PdfReference) -> object:
+    """Resolve a reference, treating an unreadable target as nothing to walk.
+
+    A dangling or malformed reference must not turn a capability survey into a
+    failure: the document already opened, so the survey reports on what it can
+    reach and stays quiet about what it cannot.
+    """
+
+    try:
+        return reader.resolve(reference)
+    except PdfEngineError:
+        return None
 
 
 def _walk_page_tree(

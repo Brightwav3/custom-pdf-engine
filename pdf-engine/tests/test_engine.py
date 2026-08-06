@@ -371,3 +371,105 @@ def test_the_password_is_never_written_to_disk(engine, write_pdf, renderer) -> N
     assert renderer.calls[0][3] == "hunter2"
     assert "hunter2" not in repr(session)
     assert all(b"hunter2" not in f.read_bytes() for f in session.cache_dir.glob("*"))
+
+
+# -- read capability ------------------------------------------------------
+
+
+WITH_IMAGE = Path(__file__).resolve().parents[1] / "fixtures" / "basic" / "with-image.pdf"
+
+
+@pytest.fixture
+def image_pdf(tmp_path) -> Path:
+    """A copy of the JPEG fixture, so a test that saves cannot touch the original."""
+
+    target = tmp_path / "with-image.pdf"
+    target.write_bytes(WITH_IMAGE.read_bytes())
+    return target
+
+
+def test_a_jpeg_document_can_be_restructured_but_not_read(engine, image_pdf) -> None:
+    session = engine.open_document(image_pdf)
+
+    read = engine.capabilities(session)["read"]
+
+    assert read["structuralEdit"] == {"state": "ready", "detail": ""}
+    assert read["textContent"]["state"] == "blocked"
+    assert read["textContent"]["filters"] == ["DCTDecode"]
+    assert read["textContent"]["objectCount"] == 1
+    assert "cannot decode" in read["textContent"]["detail"]
+
+
+def test_a_clean_document_reports_every_read_capability_ready(engine, session) -> None:
+    read = engine.capabilities(session)["read"]
+
+    assert read["structuralEdit"]["state"] == "ready"
+    assert read["textContent"] == {
+        "state": "ready",
+        "detail": "",
+        "filters": [],
+        "objectCount": 0,
+    }
+
+
+def test_capabilities_without_a_session_describe_no_document(engine) -> None:
+    capabilities = engine.capabilities()
+
+    assert "read" not in capabilities
+    assert capabilities["preview"]["state"] == "ready"
+
+
+def test_the_undecodable_survey_runs_once_and_is_reused(
+    engine, image_pdf, monkeypatch
+) -> None:
+    from pdfengine.document.pages import DocumentModel
+
+    calls = []
+    original = DocumentModel.undecodable_streams
+
+    def spy(self, reader):
+        calls.append(reader)
+        return original(self, reader)
+
+    monkeypatch.setattr(DocumentModel, "undecodable_streams", spy)
+    session = engine.open_document(image_pdf)
+
+    first = engine.capabilities(session)["read"]
+    second = engine.capabilities(session)["read"]
+
+    assert first == second
+    assert len(calls) == 1
+
+
+def test_opening_a_document_does_not_pay_for_the_survey(engine, image_pdf) -> None:
+    session = engine.open_document(image_pdf)
+
+    assert session.undecodable_survey is None
+
+    engine.capabilities(session)
+
+    assert session.undecodable_survey is not None
+
+
+def test_a_jpeg_document_still_reorders_saves_and_reopens(
+    engine, image_pdf, tmp_path, write_pdf
+) -> None:
+    session = engine.open_document(image_pdf)
+    extra = engine.open_document(write_pdf(["appended"]))
+    imported = [page.page_id for page in engine.inspect_document(extra).pages]
+    engine.apply_operations(
+        session,
+        [ImportPages(source_session_id=extra.session_id, page_ids=imported)],
+    )
+    order = [page.page_id for page in engine.inspect_document(session).pages]
+    engine.apply_operations(session, [ReorderPages(page_ids=list(reversed(order)))])
+
+    target = engine.save(session, tmp_path / "restructured.pdf")
+    reopened = engine.open_document(target)
+
+    assert engine.inspect_document(reopened).page_count == 2
+    # The JPEG rode through the rewrite, so the reopened copy is still unreadable
+    # for the same reason — which is exactly the point: the edit needed no decode.
+    assert engine.capabilities(reopened)["read"]["textContent"]["filters"] == [
+        "DCTDecode"
+    ]
