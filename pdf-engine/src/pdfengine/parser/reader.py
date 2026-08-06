@@ -10,11 +10,11 @@ from pathlib import Path
 from pdfengine.errors import PdfParseError
 
 from .tokens import Tokenizer
-from .values import PdfDictionary, PdfName, PdfReference
+from .values import PdfArray, PdfDictionary, PdfName, PdfReference
 
 
 _STARTXREF = re.compile(rb"startxref[\x00\x09\x0a\x0c\x0d\x20]+(\d+)")
-_XREF_ENTRY = re.compile(rb"(\d{10}) (\d{5}) ([fn]) ")
+_XREF_ENTRY = re.compile(rb"(\d{10}) (\d{5}) ([fn])(?:\r\n| \r| \n)")
 _OBJECT_HEADER = re.compile(
     rb"(\d+)[\x00\x09\x0a\x0c\x0d\x20]+"
     rb"(\d+)[\x00\x09\x0a\x0c\x0d\x20]+"
@@ -39,6 +39,8 @@ class PdfReader:
         self._cache: dict[PdfReference, object] = {}
         xref_offset = self._find_startxref()
         self.trailer = self._read_xref_and_trailer(xref_offset)
+        if PdfName("XRefStm") in self.trailer.entries:
+            raise PdfParseError("PDF xref streams are unsupported", xref_offset)
         if PdfName("Encrypt") in self.trailer.entries:
             raise PdfParseError("PDF encryption is unsupported", xref_offset)
 
@@ -68,22 +70,38 @@ class PdfReader:
             stream = self._read_stream(value, absolute_end)
             if stream is not None:
                 value, absolute_end = stream
-        tail = self._data[absolute_end:]
+        end_position = self._skip_ignored(absolute_end)
+        tail = self._data[end_position:]
         end_match = re.match(
-            rb"[\x00\x09\x0a\x0c\x0d\x20]*"
             rb"endobj(?:[\x00\x09\x0a\x0c\x0d\x20]|$)",
             tail,
         )
         if end_match is None:
-            raise PdfParseError("indirect object is missing endobj", absolute_end)
+            raise PdfParseError("indirect object is missing endobj", end_position)
         self._cache[reference] = value
         return value
+
+    def _skip_ignored(self, position: int) -> int:
+        while position < len(self._data):
+            if self._data[position] in b"\x00\x09\x0a\x0c\x0d\x20":
+                position += 1
+            elif self._data[position] == ord("%"):
+                position += 1
+                while (
+                    position < len(self._data)
+                    and self._data[position] not in b"\r\n"
+                ):
+                    position += 1
+            else:
+                break
+        return position
 
     def _read_stream(
         self, dictionary: PdfDictionary, position: int
     ) -> tuple[PdfStream, int] | None:
+        position = self._skip_ignored(position)
         stream_match = re.match(
-            rb"[\x00\x09\x0a\x0c\x0d\x20]*stream(?:\r\n|\r|\n)",
+            rb"stream(?:\r\n|\r|\n)",
             self._data[position:],
         )
         if stream_match is None:
@@ -105,11 +123,22 @@ class PdfReader:
             raise PdfParseError("stream Length does not end at endstream", data_end)
         data = self._data[data_start:data_end]
         stream_filter = dictionary.entries.get(PdfName("Filter"))
+        if stream_filter == PdfArray((PdfName("FlateDecode"),)):
+            stream_filter = PdfName("FlateDecode")
         if stream_filter == PdfName("FlateDecode"):
             try:
-                data = zlib.decompress(data)
+                decoder = zlib.decompressobj()
+                decoded = decoder.decompress(data)
+                decoded += decoder.flush()
             except zlib.error as exc:
                 raise PdfParseError("invalid FlateDecode stream", data_start) from exc
+            if (
+                not decoder.eof
+                or decoder.unused_data
+                or decoder.unconsumed_tail
+            ):
+                raise PdfParseError("invalid FlateDecode stream", data_start)
+            data = decoded
         elif stream_filter is not None:
             raise PdfParseError("unsupported stream filter", position)
         return PdfStream(dictionary, data), data_end + end_match.end()
@@ -151,8 +180,8 @@ class PdfReader:
             position = next_position
             for object_number in range(first, first + count):
                 entry_offset = position
-                line, position = self._read_line(position)
-                entry = _XREF_ENTRY.fullmatch(line)
+                _, position = self._read_line(position)
+                entry = _XREF_ENTRY.fullmatch(self._data[entry_offset:position])
                 if entry is None:
                     raise PdfParseError("malformed xref entry", entry_offset)
                 if entry.group(3) == b"n":

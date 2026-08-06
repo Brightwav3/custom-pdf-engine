@@ -4,7 +4,7 @@ import pytest
 
 from pdfengine.errors import PdfParseError
 from pdfengine.parser.reader import PdfReader, PdfStream
-from pdfengine.parser.values import PdfDictionary, PdfName, PdfReference
+from pdfengine.parser.values import PdfArray, PdfDictionary, PdfName, PdfReference
 
 
 def _pdf_with_objects(*objects: bytes, trailer_entries: bytes = b"") -> bytes:
@@ -42,6 +42,22 @@ def test_reader_parses_classic_xref_trailer_and_resolves_root(
     assert reader.trailer == PdfDictionary(
         {PdfName("Size"): 4, PdfName("Root"): PdfReference(1, 0)}
     )
+    assert reader.resolve(PdfReference(1, 0)) == PdfDictionary(
+        {
+            PdfName("Type"): PdfName("Catalog"),
+            PdfName("Pages"): PdfReference(2, 0),
+        }
+    )
+
+
+def test_reader_accepts_a_twenty_byte_crlf_xref_entry(tmp_path, basic_pdf) -> None:
+    path = tmp_path / "crlf-xref.pdf"
+    path.write_bytes(
+        basic_pdf(1).replace(b"0000000009 00000 n \n", b"0000000009 00000 n\r\n")
+    )
+
+    reader = PdfReader(path)
+
     assert reader.resolve(PdfReference(1, 0)) == PdfDictionary(
         {
             PdfName("Type"): PdfName("Catalog"),
@@ -99,6 +115,29 @@ def test_resolve_decodes_a_flate_stream(tmp_path) -> None:
     )
 
 
+def test_resolve_decodes_a_single_flate_filter_array(tmp_path) -> None:
+    compressed = zlib.compress(b"array-filter data")
+    value = (
+        f"<< /Length {len(compressed)} /Filter [/FlateDecode] >>\nstream\n".encode()
+        + compressed
+        + b"\nendstream"
+    )
+    path = tmp_path / "flate-array.pdf"
+    path.write_bytes(_pdf_with_objects(value, trailer_entries=b" /Root 1 0 R"))
+
+    stream = PdfReader(path).resolve(PdfReference(1, 0))
+
+    assert stream == PdfStream(
+        PdfDictionary(
+            {
+                PdfName("Length"): len(compressed),
+                PdfName("Filter"): PdfArray((PdfName("FlateDecode"),)),
+            }
+        ),
+        b"array-filter data",
+    )
+
+
 def test_resolve_reports_corrupt_flate_data_as_a_pdf_error(tmp_path) -> None:
     path = tmp_path / "corrupt-flate.pdf"
     path.write_bytes(
@@ -107,6 +146,34 @@ def test_resolve_reports_corrupt_flate_data_as_a_pdf_error(tmp_path) -> None:
             trailer_entries=b" /Root 1 0 R",
         )
     )
+
+    with pytest.raises(PdfParseError, match="FlateDecode"):
+        PdfReader(path).resolve(PdfReference(1, 0))
+
+
+def test_resolve_rejects_trailing_data_after_a_flate_member(tmp_path) -> None:
+    compressed = zlib.compress(b"decoded") + b"trailing"
+    value = (
+        f"<< /Length {len(compressed)} /Filter /FlateDecode >>\nstream\n".encode()
+        + compressed
+        + b"\nendstream"
+    )
+    path = tmp_path / "trailing-flate.pdf"
+    path.write_bytes(_pdf_with_objects(value, trailer_entries=b" /Root 1 0 R"))
+
+    with pytest.raises(PdfParseError, match="FlateDecode"):
+        PdfReader(path).resolve(PdfReference(1, 0))
+
+
+def test_resolve_rejects_a_non_eof_flate_member(tmp_path) -> None:
+    compressed = zlib.compress(b"decoded")[:-1]
+    value = (
+        f"<< /Length {len(compressed)} /Filter /FlateDecode >>\nstream\n".encode()
+        + compressed
+        + b"\nendstream"
+    )
+    path = tmp_path / "truncated-flate.pdf"
+    path.write_bytes(_pdf_with_objects(value, trailer_entries=b" /Root 1 0 R"))
 
     with pytest.raises(PdfParseError, match="FlateDecode"):
         PdfReader(path).resolve(PdfReference(1, 0))
@@ -149,6 +216,19 @@ def test_resolve_rejects_an_unknown_stream_filter(tmp_path) -> None:
         PdfReader(path).resolve(PdfReference(1, 0))
 
 
+def test_resolve_rejects_an_unknown_stream_filter_array(tmp_path) -> None:
+    path = tmp_path / "unknown-filter-array.pdf"
+    path.write_bytes(
+        _pdf_with_objects(
+            b"<< /Length 3 /Filter [/LZWDecode] >>\nstream\nraw\nendstream",
+            trailer_entries=b" /Root 1 0 R",
+        )
+    )
+
+    with pytest.raises(PdfParseError, match="stream filter"):
+        PdfReader(path).resolve(PdfReference(1, 0))
+
+
 def test_resolve_rejects_object_streams(tmp_path) -> None:
     path = tmp_path / "object-stream.pdf"
     path.write_bytes(
@@ -169,6 +249,19 @@ def test_reader_rejects_xref_streams(tmp_path) -> None:
     body.extend(f"startxref\n{xref_offset}\n%%EOF\n".encode())
     path = tmp_path / "xref-stream.pdf"
     path.write_bytes(body)
+
+    with pytest.raises(PdfParseError, match="xref streams"):
+        PdfReader(path)
+
+
+def test_reader_rejects_a_hybrid_xref_stream_trailer(tmp_path) -> None:
+    path = tmp_path / "hybrid-xref.pdf"
+    path.write_bytes(
+        _pdf_with_objects(
+            b"<< /Type /Catalog >>",
+            trailer_entries=b" /Root 1 0 R /XRefStm 9",
+        )
+    )
 
     with pytest.raises(PdfParseError, match="xref streams"):
         PdfReader(path)
@@ -245,3 +338,29 @@ def test_indirect_objects_are_parsed_only_when_resolved(tmp_path) -> None:
 
     with pytest.raises(PdfParseError):
         reader.resolve(PdfReference(1, 0))
+
+
+def test_resolve_accepts_a_comment_between_a_value_and_endobj(tmp_path) -> None:
+    path = tmp_path / "comment-before-endobj.pdf"
+    path.write_bytes(
+        _pdf_with_objects(
+            b"42 % comment before endobj",
+            trailer_entries=b" /Root 1 0 R",
+        )
+    )
+
+    assert PdfReader(path).resolve(PdfReference(1, 0)) == 42
+
+
+def test_resolve_accepts_a_comment_between_a_dictionary_and_stream(tmp_path) -> None:
+    path = tmp_path / "comment-before-stream.pdf"
+    path.write_bytes(
+        _pdf_with_objects(
+            b"<< /Length 5 >> % comment before stream\nstream\nhello\nendstream",
+            trailer_entries=b" /Root 1 0 R",
+        )
+    )
+
+    assert PdfReader(path).resolve(PdfReference(1, 0)) == PdfStream(
+        PdfDictionary({PdfName("Length"): 5}), b"hello"
+    )
