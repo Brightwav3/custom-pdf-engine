@@ -37,6 +37,15 @@ def test_read_value_decodes_literal_string_escapes_and_balanced_parentheses() ->
     assert value == PdfString(b"A(B)\\A (nested)")
 
 
+def test_read_value_discards_overflow_bits_in_octal_string_escapes() -> None:
+    assert Tokenizer(b"(\\777)").read_value() == PdfString(b"\xff")
+
+
+@pytest.mark.parametrize("source", [b"(first\rsecond)", b"(first\r\nsecond)"])
+def test_read_value_normalizes_literal_string_line_endings(source: bytes) -> None:
+    assert Tokenizer(source).read_value() == PdfString(b"first\nsecond")
+
+
 def test_read_value_decodes_hex_string() -> None:
     assert Tokenizer(b"<4869F>").read_value() == PdfString(b"Hi\xf0")
 
@@ -59,6 +68,15 @@ def test_read_value_keeps_a_number_before_a_dictionary_name_as_a_number() -> Non
     value = Tokenizer(b"<< /Count 2 /Next 3 >>").read_value()
 
     assert value == PdfDictionary({PdfName("Count"): 2, PdfName("Next"): 3})
+
+
+def test_pdf_array_snapshots_list_inputs_as_a_tuple() -> None:
+    source = [PdfName("One")]
+    value = PdfArray(source)
+
+    source.append(PdfName("Two"))
+
+    assert value.items == (PdfName("One"),)
 
 
 @pytest.mark.parametrize(

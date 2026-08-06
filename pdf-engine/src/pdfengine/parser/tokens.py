@@ -96,6 +96,10 @@ class Tokenizer:
                 if depth == 0:
                     return PdfString(bytes(content))
                 content.append(current)
+            elif current == ord("\r"):
+                if self.offset < len(self.data) and self.data[self.offset] == ord("\n"):
+                    self.offset += 1
+                content.append(ord("\n"))
             else:
                 content.append(current)
         raise PdfParseError("unterminated literal string", start)
@@ -127,7 +131,7 @@ class Tokenizer:
                     break
                 digits.append(next_byte)
                 self.offset += 1
-            content.append(int(digits, 8))
+            content.append(int(digits, 8) & 0xFF)
         else:
             content.append(current)
 

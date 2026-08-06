@@ -27,6 +27,9 @@ class PdfString:
 class PdfArray:
     items: tuple[object, ...]
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "items", tuple(self.items))
+
 
 @dataclass(frozen=True)
 class PdfDictionary:
