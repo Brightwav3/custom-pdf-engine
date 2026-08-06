@@ -1,8 +1,11 @@
 import zlib
+from pathlib import Path
 
 import pytest
 
-from pdfengine.errors import PdfParseError
+from pdfengine.document import DocumentModel
+from pdfengine.errors import PdfParseError, UnsupportedPdfError
+from pdfengine.parser import values
 from pdfengine.parser.reader import PdfReader, PdfStream
 from pdfengine.parser.values import PdfArray, PdfDictionary, PdfName, PdfReference
 
@@ -110,8 +113,11 @@ def test_resolve_decodes_a_flate_stream(tmp_path) -> None:
                 PdfName("Filter"): PdfName("FlateDecode"),
             }
         ),
-        b"decoded stream data",
+        compressed,
+        (PdfName("FlateDecode"),),
     )
+    assert stream.is_decodable
+    assert stream.data == b"decoded stream data"
 
 
 def test_resolve_decodes_a_single_flate_filter_array(tmp_path) -> None:
@@ -133,8 +139,11 @@ def test_resolve_decodes_a_single_flate_filter_array(tmp_path) -> None:
                 PdfName("Filter"): PdfArray((PdfName("FlateDecode"),)),
             }
         ),
-        b"array-filter data",
+        compressed,
+        (PdfName("FlateDecode"),),
     )
+    assert stream.is_decodable
+    assert stream.data == b"array-filter data"
 
 
 def test_resolve_reports_corrupt_flate_data_as_a_pdf_error(tmp_path) -> None:
@@ -146,8 +155,10 @@ def test_resolve_reports_corrupt_flate_data_as_a_pdf_error(tmp_path) -> None:
         )
     )
 
+    stream = PdfReader(path).resolve(PdfReference(1, 0))
+
     with pytest.raises(PdfParseError, match="FlateDecode"):
-        PdfReader(path).resolve(PdfReference(1, 0))
+        stream.data
 
 
 def test_resolve_rejects_trailing_data_after_a_flate_member(tmp_path) -> None:
@@ -160,8 +171,10 @@ def test_resolve_rejects_trailing_data_after_a_flate_member(tmp_path) -> None:
     path = tmp_path / "trailing-flate.pdf"
     path.write_bytes(_pdf_with_objects(value, trailer_entries=b" /Root 1 0 R"))
 
+    stream = PdfReader(path).resolve(PdfReference(1, 0))
+
     with pytest.raises(PdfParseError, match="FlateDecode"):
-        PdfReader(path).resolve(PdfReference(1, 0))
+        stream.data
 
 
 def test_resolve_rejects_a_non_eof_flate_member(tmp_path) -> None:
@@ -174,8 +187,10 @@ def test_resolve_rejects_a_non_eof_flate_member(tmp_path) -> None:
     path = tmp_path / "truncated-flate.pdf"
     path.write_bytes(_pdf_with_objects(value, trailer_entries=b" /Root 1 0 R"))
 
+    stream = PdfReader(path).resolve(PdfReference(1, 0))
+
     with pytest.raises(PdfParseError, match="FlateDecode"):
-        PdfReader(path).resolve(PdfReference(1, 0))
+        stream.data
 
 
 def test_resolve_caches_an_indirect_object(tmp_path, basic_pdf) -> None:
@@ -202,30 +217,110 @@ def test_reader_rejects_encrypted_pdfs(tmp_path) -> None:
         PdfReader(path)
 
 
-def test_resolve_rejects_an_unknown_stream_filter(tmp_path) -> None:
-    path = tmp_path / "unknown-filter.pdf"
-    path.write_bytes(
-        _pdf_with_objects(
-            b"<< /Length 3 /Filter /LZWDecode >>\nstream\nraw\nendstream",
-            trailer_entries=b" /Root 1 0 R",
-        )
+def test_an_undecodable_filter_still_reads_and_keeps_its_raw_bytes(tmp_path) -> None:
+    body = b"\xff\xd8\xff\xd9raw jpeg"
+    value = (
+        f"<< /Length {len(body)} /Filter /DCTDecode >>\nstream\n".encode()
+        + body
+        + b"\nendstream"
     )
+    path = tmp_path / "dct.pdf"
+    path.write_bytes(_pdf_with_objects(value, trailer_entries=b" /Root 1 0 R"))
 
-    with pytest.raises(PdfParseError, match="stream filter"):
-        PdfReader(path).resolve(PdfReference(1, 0))
+    stream = PdfReader(path).resolve(PdfReference(1, 0))
+
+    assert isinstance(stream, PdfStream)
+    assert stream.raw == body
+    assert stream.is_decodable is False
+    assert stream.residual_filters == (PdfName("DCTDecode"),)
+    with pytest.raises(UnsupportedPdfError, match="DCTDecode"):
+        stream.data
 
 
-def test_resolve_rejects_an_unknown_stream_filter_array(tmp_path) -> None:
-    path = tmp_path / "unknown-filter-array.pdf"
-    path.write_bytes(
-        _pdf_with_objects(
-            b"<< /Length 3 /Filter [/LZWDecode] >>\nstream\nraw\nendstream",
-            trailer_entries=b" /Root 1 0 R",
-        )
+def test_a_filter_chain_decodes_only_its_decodable_prefix(tmp_path) -> None:
+    body = zlib.compress(b"\xff\xd8 jpeg bytes")
+    value = (
+        f"<< /Length {len(body)} /Filter [/FlateDecode /DCTDecode] >>\nstream\n".encode()
+        + body
+        + b"\nendstream"
     )
+    path = tmp_path / "flate-then-dct.pdf"
+    path.write_bytes(_pdf_with_objects(value, trailer_entries=b" /Root 1 0 R"))
 
-    with pytest.raises(PdfParseError, match="stream filter"):
-        PdfReader(path).resolve(PdfReference(1, 0))
+    stream = PdfReader(path).resolve(PdfReference(1, 0))
+
+    assert stream.raw == body
+    assert stream.filters == (PdfName("FlateDecode"), PdfName("DCTDecode"))
+    assert stream.residual_filters == (PdfName("DCTDecode"),)
+    with pytest.raises(UnsupportedPdfError, match="DCTDecode"):
+        stream.data
+
+
+def test_decode_parms_line_up_with_the_filter_chain(tmp_path) -> None:
+    body = b"raw"
+    value = (
+        b"<< /Length 3 /Filter [/FlateDecode /DCTDecode]"
+        b" /DecodeParms [null << /Columns 4 >>] >>\nstream\nraw\nendstream"
+    )
+    path = tmp_path / "decode-parms.pdf"
+    path.write_bytes(_pdf_with_objects(value, trailer_entries=b" /Root 1 0 R"))
+
+    stream = PdfReader(path).resolve(PdfReference(1, 0))
+
+    assert stream.raw == body
+    assert len(stream.decode_parms) == 2
+    assert stream.decode_parms[0] is None
+    assert stream.decode_parms[1] == PdfDictionary({PdfName("Columns"): 4})
+
+
+def test_a_single_decode_parms_dictionary_is_accepted(tmp_path) -> None:
+    value = (
+        b"<< /Length 3 /Filter /DCTDecode /DecodeParms << /Columns 4 >> >>"
+        b"\nstream\nraw\nendstream"
+    )
+    path = tmp_path / "single-decode-parms.pdf"
+    path.write_bytes(_pdf_with_objects(value, trailer_entries=b" /Root 1 0 R"))
+
+    stream = PdfReader(path).resolve(PdfReference(1, 0))
+
+    assert stream.decode_parms == (PdfDictionary({PdfName("Columns"): 4}),)
+
+
+def test_equality_ignores_the_decode_cache(tmp_path) -> None:
+    compressed = zlib.compress(b"same body")
+    dictionary = PdfDictionary({PdfName("Length"): len(compressed)})
+    first = PdfStream(dictionary, compressed, (PdfName("FlateDecode"),))
+    second = PdfStream(dictionary, compressed, (PdfName("FlateDecode"),))
+
+    assert first.data == b"same body"
+
+    assert first == second
+
+
+def test_decoding_refuses_to_inflate_past_the_size_limit(tmp_path, monkeypatch) -> None:
+    compressed = zlib.compress(b"\x00" * 100_000)
+    value = (
+        f"<< /Length {len(compressed)} /Filter /FlateDecode >>\nstream\n".encode()
+        + compressed
+        + b"\nendstream"
+    )
+    path = tmp_path / "bomb.pdf"
+    path.write_bytes(_pdf_with_objects(value, trailer_entries=b" /Root 1 0 R"))
+    monkeypatch.setattr(values, "MAX_DECODED_BYTES", 1024)
+
+    stream = PdfReader(path).resolve(PdfReference(1, 0))
+
+    with pytest.raises(PdfParseError, match="exceeds the size limit"):
+        stream.data
+
+
+def test_the_image_fixture_opens_as_a_single_page_document() -> None:
+    path = Path(__file__).resolve().parents[1] / "fixtures" / "basic" / "with-image.pdf"
+
+    reader = PdfReader(path)
+    model = DocumentModel.from_reader(reader)
+
+    assert model.info.page_count == 1
 
 
 def test_resolve_rejects_object_streams(tmp_path) -> None:
