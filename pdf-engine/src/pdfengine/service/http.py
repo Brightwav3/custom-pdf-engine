@@ -18,6 +18,7 @@ from pdfengine.errors import InvalidRequestError
 
 LOOPBACK_HOSTS = {"127.0.0.1", "::1", "localhost"}
 MAX_BODY_BYTES = 1024 * 1024
+DRAIN_LIMIT_BYTES = 16 * 1024 * 1024
 
 
 class _Handler(BaseHTTPRequestHandler):
@@ -49,6 +50,13 @@ class _Handler(BaseHTTPRequestHandler):
             json.dumps(payload, separators=(",", ":")).encode("utf-8"),
             "application/json",
         )
+
+    def _drain(self, remaining: int) -> None:
+        while remaining > 0:
+            chunk = self.rfile.read(min(remaining, 65536))
+            if not chunk:
+                return
+            remaining -= len(chunk)
 
     # -- routes ------------------------------------------------------
 
@@ -94,7 +102,9 @@ class _Handler(BaseHTTPRequestHandler):
             )
             return
         if length > MAX_BODY_BYTES:
-            # The body is never read, so the connection cannot be reused.
+            # Drain a bounded amount so the client finishes sending and can
+            # actually read the refusal, instead of seeing a reset mid-write.
+            self._drain(min(length, DRAIN_LIMIT_BYTES))
             self.close_connection = True
             self._send_json(
                 413,
