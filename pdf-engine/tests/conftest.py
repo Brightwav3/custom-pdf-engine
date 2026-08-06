@@ -95,6 +95,32 @@ def _number(value: float) -> str:
     return str(int(value)) if float(value).is_integer() else repr(float(value))
 
 
+def make_png(width: int = 4, height: int = 3) -> bytes:
+    """Build a real, minimal greyscale PNG without any imaging dependency."""
+
+    def chunk(kind: bytes, payload: bytes) -> bytes:
+        return (
+            len(payload).to_bytes(4, "big")
+            + kind
+            + payload
+            + (zlib.crc32(kind + payload) & 0xFFFFFFFF).to_bytes(4, "big")
+        )
+
+    header = width.to_bytes(4, "big") + height.to_bytes(4, "big") + bytes([8, 0, 0, 0, 0])
+    raw = b"".join(b"\x00" + b"\xff" * width for _ in range(height))
+    return (
+        b"\x89PNG\r\n\x1a\n"
+        + chunk(b"IHDR", header)
+        + chunk(b"IDAT", zlib.compress(raw))
+        + chunk(b"IEND", b"")
+    )
+
+
+@pytest.fixture
+def png_bytes() -> Callable[..., bytes]:
+    return make_png
+
+
 @pytest.fixture
 def basic_pdf() -> Callable[[int], bytes]:
     """Return a self-contained PDF with the requested number of pages."""
