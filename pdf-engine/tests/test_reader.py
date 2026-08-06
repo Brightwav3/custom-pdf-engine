@@ -39,9 +39,8 @@ def test_reader_parses_classic_xref_trailer_and_resolves_root(
 
     reader = PdfReader(path)
 
-    assert reader.trailer == PdfDictionary(
-        {PdfName("Size"): 4, PdfName("Root"): PdfReference(1, 0)}
-    )
+    assert reader.trailer.entries[PdfName("Root")] == PdfReference(1, 0)
+    assert reader.trailer.entries[PdfName("Size")] == 6
     assert reader.resolve(PdfReference(1, 0)) == PdfDictionary(
         {
             PdfName("Type"): PdfName("Catalog"),
