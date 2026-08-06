@@ -1,0 +1,116 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pdfengine.local/schemas/v1/operation-request.json",
+  "title": "Apply operations request",
+  "description": "Submit an immutable batch of structural edits. Pages are always addressed by their stable pageId, never by position.",
+  "type": "object",
+  "required": ["apiVersion", "requestId", "command", "sessionId", "operations"],
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": { "const": "v1" },
+    "requestId": { "type": "string", "minLength": 1 },
+    "command": { "const": "apply" },
+    "sessionId": { "type": "string", "minLength": 1 },
+    "dryRun": {
+      "type": "boolean",
+      "default": false,
+      "description": "Return the projected document without recording the batch."
+    },
+    "operations": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "$ref": "#/$defs/operation" }
+    }
+  },
+  "$defs": {
+    "pageIds": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "minLength": 1 }
+    },
+    "operation": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["kind", "pageIds", "degrees"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "rotate_pages" },
+            "pageIds": { "$ref": "#/$defs/pageIds" },
+            "degrees": { "enum": [90, 180, 270] }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "pageIds"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "enum": ["delete_pages", "reorder_pages", "extract_pages"] },
+            "pageIds": { "$ref": "#/$defs/pageIds" }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "insert_blank_page" },
+            "afterPageId": { "type": ["string", "null"], "minLength": 1 },
+            "width": { "type": "number", "exclusiveMinimum": 0, "default": 612 },
+            "height": { "type": "number", "exclusiveMinimum": 0, "default": 792 },
+            "pageId": { "type": "string", "minLength": 1 }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "pageIds", "box"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "crop_pages" },
+            "pageIds": { "$ref": "#/$defs/pageIds" },
+            "box": {
+              "type": "array",
+              "minItems": 4,
+              "maxItems": 4,
+              "items": { "type": "number" },
+              "description": "[llx, lly, urx, ury] in points, clipped to the page media box."
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "entries"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "set_metadata" },
+            "entries": {
+              "type": "object",
+              "minProperties": 1,
+              "additionalProperties": false,
+              "properties": {
+                "title": { "type": ["string", "null"] },
+                "author": { "type": ["string", "null"] },
+                "subject": { "type": ["string", "null"] },
+                "keywords": { "type": ["string", "null"] },
+                "creator": { "type": ["string", "null"] },
+                "producer": { "type": ["string", "null"] }
+              }
+            }
+          }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "sourceSessionId", "pageIds"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "import_pages" },
+            "sourceSessionId": { "type": "string", "minLength": 1 },
+            "pageIds": { "$ref": "#/$defs/pageIds" },
+            "afterPageId": { "type": ["string", "null"], "minLength": 1 }
+          }
+        }
+      ]
+    }
+  }
+}
