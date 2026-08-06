@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import re
-import zlib
-from dataclasses import dataclass
 from pathlib import Path
 
 from pdfengine.errors import PdfParseError, UnsupportedPdfError
 
 from .tokens import Tokenizer
-from .values import PdfArray, PdfDictionary, PdfName, PdfReference
+from .values import PdfArray, PdfDictionary, PdfName, PdfReference, PdfStream
+
+
+__all__ = ["PdfReader", "PdfStream"]
 
 
 _STARTXREF = re.compile(rb"startxref[\x00\x09\x0a\x0c\x0d\x20]+(\d+)")
@@ -20,12 +21,6 @@ _OBJECT_HEADER = re.compile(
     rb"(\d+)[\x00\x09\x0a\x0c\x0d\x20]+"
     rb"obj(?:[\x00\x09\x0a\x0c\x0d\x20]|$)"
 )
-
-
-@dataclass(frozen=True)
-class PdfStream:
-    dictionary: PdfDictionary
-    data: bytes
 
 
 class PdfReader:
@@ -121,27 +116,50 @@ class PdfReader:
         )
         if end_match is None:
             raise PdfParseError("stream Length does not end at endstream", data_end)
-        data = self._data[data_start:data_end]
-        stream_filter = dictionary.entries.get(PdfName("Filter"))
-        if stream_filter == PdfArray((PdfName("FlateDecode"),)):
-            stream_filter = PdfName("FlateDecode")
-        if stream_filter == PdfName("FlateDecode"):
-            try:
-                decoder = zlib.decompressobj()
-                decoded = decoder.decompress(data)
-                decoded += decoder.flush()
-            except zlib.error as exc:
-                raise PdfParseError("invalid FlateDecode stream", data_start) from exc
-            if (
-                not decoder.eof
-                or decoder.unused_data
-                or decoder.unconsumed_tail
-            ):
-                raise PdfParseError("invalid FlateDecode stream", data_start)
-            data = decoded
-        elif stream_filter is not None:
-            raise UnsupportedPdfError(f"stream filter {stream_filter}", position)
-        return PdfStream(dictionary, data), data_end + end_match.end()
+        raw = self._data[data_start:data_end]
+        filters = self._declared_filters(dictionary)
+        parms = self._declared_decode_parms(dictionary, len(filters))
+        return (
+            PdfStream(dictionary, raw, filters, parms),
+            data_end + end_match.end(),
+        )
+
+    def _declared_filters(self, dictionary: PdfDictionary) -> tuple[PdfName, ...]:
+        """Normalize /Filter to a tuple, whether written as a name or array."""
+
+        declared = dictionary.entries.get(PdfName("Filter"))
+        if isinstance(declared, PdfReference):
+            declared = self.resolve(declared)
+        if declared is None:
+            return ()
+        if isinstance(declared, PdfName):
+            return (declared,)
+        if isinstance(declared, PdfArray) and all(
+            isinstance(item, PdfName) for item in declared.items
+        ):
+            return tuple(declared.items)  # type: ignore[arg-type]
+        raise PdfParseError("stream Filter must be a name or an array of names", 0)
+
+    def _declared_decode_parms(
+        self, dictionary: PdfDictionary, count: int
+    ) -> tuple[object, ...]:
+        """Line /DecodeParms up with the filter chain, padding with None."""
+
+        declared = dictionary.entries.get(PdfName("DecodeParms"))
+        if isinstance(declared, PdfReference):
+            declared = self.resolve(declared)
+        if declared is None:
+            # No /DecodeParms at all stays empty rather than a tuple of
+            # Nones, so the common case compares equal to a plain stream.
+            return ()
+        items: tuple[object, ...]
+        if isinstance(declared, PdfArray):
+            items = declared.items
+        else:
+            items = (declared,)
+        if len(items) < count:
+            items = items + (None,) * (count - len(items))
+        return items[:count]
 
     def _find_startxref(self) -> int:
         tail_start = max(0, len(self._data) - 65536)
