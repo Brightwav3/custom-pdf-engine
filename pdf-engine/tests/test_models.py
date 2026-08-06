@@ -60,6 +60,49 @@ def test_operation_kind_cannot_be_overridden_by_callers() -> None:
         MergeOperation(source_paths=(Path("a.pdf"),), kind="not_merge")
 
 
+@pytest.mark.parametrize(
+    ("create", "read_value", "values", "mutate", "expected"),
+    [
+        (
+            lambda values: MergeOperation(source_paths=values),
+            lambda operation: operation.source_paths,
+            [Path("a.pdf")],
+            lambda values: values.append(Path("b.pdf")),
+            (Path("a.pdf"),),
+        ),
+        (
+            lambda values: SplitOperation(page_ranges=values),
+            lambda operation: operation.page_ranges,
+            [[0, 1]],
+            lambda values: values[0].append(2),
+            ((0, 1),),
+        ),
+        (
+            lambda values: ExtractPagesOperation(page_indices=values),
+            lambda operation: operation.page_indices,
+            [0],
+            lambda values: values.append(1),
+            (0,),
+        ),
+        (
+            lambda values: RotatePagesOperation(page_indices=values, degrees=90),
+            lambda operation: operation.page_indices,
+            [0],
+            lambda values: values.append(1),
+            (0,),
+        ),
+    ],
+)
+def test_operations_do_not_retain_mutable_input_collections(
+    create, read_value, values, mutate, expected
+) -> None:
+    operation = create(values)
+
+    mutate(values)
+
+    assert read_value(operation) == expected
+
+
 def test_save_options_preserves_explicit_output_preferences() -> None:
     options = SaveOptions(output_path=Path("out.pdf"), overwrite=True, optimize=True)
 

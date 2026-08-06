@@ -45,11 +45,19 @@ class MergeOperation:
     source_paths: tuple[Path, ...]
     kind: ClassVar[str] = "merge"
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "source_paths", tuple(self.source_paths))
+
 
 @dataclass(frozen=True)
 class SplitOperation:
     page_ranges: tuple[tuple[int, int], ...]
     kind: ClassVar[str] = "split"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self, "page_ranges", tuple(tuple(page_range) for page_range in self.page_ranges)
+        )
 
 
 @dataclass(frozen=True)
@@ -57,12 +65,18 @@ class ExtractPagesOperation:
     page_indices: tuple[int, ...]
     kind: ClassVar[str] = "extract_pages"
 
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "page_indices", tuple(self.page_indices))
+
 
 @dataclass(frozen=True)
 class RotatePagesOperation:
     page_indices: tuple[int, ...]
     degrees: int
     kind: ClassVar[str] = "rotate_pages"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "page_indices", tuple(self.page_indices))
 
 
 @dataclass(frozen=True)
