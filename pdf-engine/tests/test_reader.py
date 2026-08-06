@@ -458,3 +458,57 @@ def test_resolve_accepts_a_comment_between_a_dictionary_and_stream(tmp_path) -> 
     assert PdfReader(path).resolve(PdfReference(1, 0)) == PdfStream(
         PdfDictionary({PdfName("Length"): 5}), b"hello"
     )
+
+
+def test_flate_with_a_predictor_is_reported_as_undecodable(tmp_path) -> None:
+    """Inflating a predicted stream returns plausible but wrong bytes."""
+
+    compressed = zlib.compress(b"\x02rowdata")
+    value = (
+        f"<< /Length {len(compressed)} /Filter /FlateDecode "
+        f"/DecodeParms << /Predictor 12 /Columns 4 >> >>\nstream\n".encode()
+        + compressed
+        + b"\nendstream"
+    )
+    path = tmp_path / "predicted.pdf"
+    path.write_bytes(_pdf_with_objects(value, trailer_entries=b" /Root 1 0 R"))
+
+    stream = PdfReader(path).resolve(PdfReference(1, 0))
+
+    assert stream.raw == compressed
+    assert stream.is_decodable is False
+    with pytest.raises(PdfParseError, match="FlateDecode with a predictor"):
+        stream.data
+
+
+def test_flate_with_predictor_one_still_decodes(tmp_path) -> None:
+    compressed = zlib.compress(b"plain bytes")
+    value = (
+        f"<< /Length {len(compressed)} /Filter /FlateDecode "
+        f"/DecodeParms << /Predictor 1 >> >>\nstream\n".encode()
+        + compressed
+        + b"\nendstream"
+    )
+    path = tmp_path / "unpredicted.pdf"
+    path.write_bytes(_pdf_with_objects(value, trailer_entries=b" /Root 1 0 R"))
+
+    assert PdfReader(path).resolve(PdfReference(1, 0)).data == b"plain bytes"
+
+
+def test_an_undecodable_filter_is_named_without_dataclass_noise(tmp_path) -> None:
+    """The message is user-facing: it must read 'DCTDecode', not a repr."""
+
+    path = tmp_path / "jpeg.pdf"
+    path.write_bytes(
+        _pdf_with_objects(
+            b"<< /Length 3 /Filter /DCTDecode >>\nstream\nraw\nendstream",
+            trailer_entries=b" /Root 1 0 R",
+        )
+    )
+    stream = PdfReader(path).resolve(PdfReference(1, 0))
+
+    with pytest.raises(PdfParseError) as raised:
+        stream.data
+
+    assert str(raised.value).startswith("unsupported PDF feature: stream filter DCTDecode")
+    assert "PdfName" not in str(raised.value)

@@ -75,12 +75,25 @@ class PdfStream:
         object.__setattr__(self, "filters", tuple(self.filters))
         object.__setattr__(self, "decode_parms", tuple(self.decode_parms))
 
+    def parms_at(self, index: int) -> object:
+        """The decode parameters declared for filter ``index``, if any."""
+
+        return self.decode_parms[index] if index < len(self.decode_parms) else None
+
+    def _decodable_at(self, index: int) -> bool:
+        if self.filters[index] != _FLATE:
+            return False
+        # Flate with a predictor needs an un-predicting pass this version does
+        # not implement. Inflating alone would return plausible-looking bytes
+        # that are simply wrong, so treat it as undecodable rather than lie.
+        return not _has_predictor(self.parms_at(index))
+
     @property
     def residual_filters(self) -> tuple[PdfName, ...]:
         """The filters left over after the longest decodable prefix."""
 
         index = 0
-        while index < len(self.filters) and self.filters[index] == _FLATE:
+        while index < len(self.filters) and self._decodable_at(index):
             index += 1
         return self.filters[index:]
 
@@ -97,12 +110,26 @@ class PdfStream:
             return cached
         residual = self.residual_filters
         if residual:
-            raise UnsupportedPdfError(f"stream filter {residual[0]}")
+            name = residual[0].value
+            if residual[0] == _FLATE:
+                name = f"{name} with a predictor"
+            raise UnsupportedPdfError(f"stream filter {name}")
         decoded = self.raw
         for _ in self.filters:
             decoded = _inflate(decoded)
         object.__setattr__(self, "_decoded", decoded)
         return decoded
+
+
+def _has_predictor(parms: object) -> bool:
+    """True when decode parameters ask for PNG or TIFF prediction."""
+
+    if not isinstance(parms, PdfDictionary):
+        return False
+    predictor = parms.entries.get(PdfName("Predictor"))
+    if isinstance(predictor, bool) or not isinstance(predictor, int):
+        return False
+    return predictor > 1
 
 
 def _inflate(data: bytes) -> bytes:
