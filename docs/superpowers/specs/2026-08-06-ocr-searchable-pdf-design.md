@@ -193,6 +193,92 @@ The Czech round-trip is the test that proves the glyphless-font decision: OCR a
 rendered page containing `příliš žluťoučký kůň`, save, reopen, and assert the
 extracted text matches exactly.
 
+---
+
+## Verified against a real install
+
+Everything below was measured on the target machine (Tesseract 5.4.0 UB
+Mannheim, Poppler 25.07.0), not assumed. Each finding changes the design.
+
+### Legacy mode is unavailable here, as predicted
+
+```
+--oem 1 (LSTM)    "one page"                                    correct
+--oem 0 (legacy)  Error: Tesseract (legacy) engine requested,
+                  but components are not present in eng.traineddata!!
+```
+
+This installation ships LSTM-only traineddata. Hardcoding `--oem 0` would have
+made the feature dead on arrival. The capability probe must report
+`modes: ["lstm"]` here, and light up `"legacy"` only where the data supports it.
+
+### Language data lives outside Program Files
+
+Models are installed in `~/tessdata` and selected with `--tessdata-dir`, so
+nothing under Program Files is modified and no elevation is needed. Twelve
+models are present: `ara ces chi_sim chi_tra deu eng fra jpn kor osd rus spa`.
+
+**Consequence: never invoke Tesseract by config-file name.** A custom tessdata
+directory has no `configs/` subdirectory, so `tesseract … tsv` fails with
+`read_params_file: Can't open tsv`. Request output with the `-c` form instead:
+
+```
+-c tessedit_create_tsv=1        # works with any tessdata directory
+```
+
+That produces the identical TSV and removes a whole class of installation
+dependency. The adapter must use `-c` exclusively.
+
+### A quiet zone is mandatory
+
+Text touching the image border yields **empty output** — not a warning, not a
+partial result. Adding a 40 px white border made the difference between nothing
+and a correct read for both Japanese and Chinese.
+
+**The adapter pads every rasterized page with a white border before
+recognition**, and subtracts that padding when transforming boxes back to PDF
+user space. Full pages usually have margins, but a cropped page or an
+edge-to-edge scan would otherwise silently return nothing.
+
+### Page segmentation mode: 3 is the default
+
+`--psm 3` (automatic) beat 6 and 7 on Chinese, which misread 测 as 汕 under both.
+PSM is exposed as a setting, defaulting to 3.
+
+### CJK output is space-separated
+
+`日本語のテキスト` comes back as `日 本 語 の テキ スト`. Tesseract treats CJK
+runs as separate words. Written verbatim into the text layer, a search for
+`日本語` would not match.
+
+**The layer writer joins adjacent words with no separator when both sides are
+CJK**, and keeps the space otherwise. This needs a test per script.
+
+### Scripts confirmed end to end
+
+| Script | Input | Output |
+| --- | --- | --- |
+| Czech | `příliš žluťoučký kůň úpěl ďábelské ódy` | exact, every diacritic |
+| Arabic (RTL) | `مرحبا بالعالم` | exact |
+| Cyrillic | `Привет мир` | exact |
+| Japanese | `日本語のテキスト` | correct, space-separated |
+| Chinese | `中文测试文本` | correct at psm 3 |
+
+Czech settles the font question: Latin-1 cannot represent `ř`, `ů`, or `ě`, so
+the glyphless CIDFontType2 with a generated `ToUnicode` CMap is required, not
+merely preferable.
+
+### TSV shape the parser must handle
+
+```
+level page_num block_num par_num line_num word_num left top width height conf text
+1     1        0         0       0        0        0    0   348   73     -1   
+2     1        1         0       0        0        5    12  339   59     -1   
+```
+
+Rows at level < 5 are structural and carry `conf = -1` with empty text. Only
+level 5 rows are words. The parser keeps level-5 rows and ignores the rest.
+
 ## Out of scope
 
 Deskewing, despeckling, and other preprocessing; layout and table
