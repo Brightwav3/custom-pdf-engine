@@ -13,6 +13,8 @@ class PageInfo:
     width: float
     height: float
     rotation: int = 0
+    page_id: str | None = None
+    source_index: int | None = None
 
 
 @dataclass(frozen=True)
