@@ -237,7 +237,7 @@ def test_resolve_rejects_object_streams(tmp_path) -> None:
         )
     )
 
-    with pytest.raises(PdfParseError, match="object streams"):
+    with pytest.raises(PdfParseError, match="object stream"):
         PdfReader(path).resolve(PdfReference(1, 0))
 
 
@@ -249,7 +249,7 @@ def test_reader_rejects_xref_streams(tmp_path) -> None:
     path = tmp_path / "xref-stream.pdf"
     path.write_bytes(body)
 
-    with pytest.raises(PdfParseError, match="xref streams"):
+    with pytest.raises(PdfParseError, match="xref stream"):
         PdfReader(path)
 
 
@@ -262,7 +262,7 @@ def test_reader_rejects_a_hybrid_xref_stream_trailer(tmp_path) -> None:
         )
     )
 
-    with pytest.raises(PdfParseError, match="xref streams"):
+    with pytest.raises(PdfParseError, match="xref stream"):
         PdfReader(path)
 
 

@@ -17,13 +17,18 @@ class PdfParseError(PdfEngineError):
         self.offset = offset
 
 
-class UnsupportedPdfError(PdfEngineError):
-    """Raised when a document uses a construct outside the v0.1 subset."""
+class UnsupportedPdfError(PdfParseError):
+    """Raised when a document uses a construct outside the v0.1 subset.
+
+    It subclasses :class:`PdfParseError` so callers that only care that a
+    document could not be read keep working, while callers that want to tell
+    the user *which* feature blocked them can catch this instead.
+    """
 
     code = "unsupported_pdf"
 
-    def __init__(self, feature: str) -> None:
-        super().__init__(f"unsupported PDF feature: {feature}")
+    def __init__(self, feature: str, offset: int = 0) -> None:
+        super().__init__(f"unsupported PDF feature: {feature}", offset)
         self.feature = feature
 
 
