@@ -66,6 +66,18 @@ class RenderError(PdfEngineError):
     code = "render_error"
 
 
+class OcrUnavailableError(PdfEngineError):
+    """Raised when no working OCR engine is installed."""
+
+    code = "ocr_unavailable"
+
+
+class OcrError(PdfEngineError):
+    """Raised when an OCR engine is present but fails to recognize a page."""
+
+    code = "ocr_error"
+
+
 class SourceChangedError(PdfEngineError):
     """Raised when the opened source file changed underneath the session."""
 
