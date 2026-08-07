@@ -109,6 +109,19 @@
             "pageIds": { "$ref": "#/$defs/pageIds" },
             "afterPageId": { "type": ["string", "null"], "minLength": 1 }
           }
+        },
+        {
+          "type": "object",
+          "required": ["kind", "pageIds"],
+          "additionalProperties": false,
+          "properties": {
+            "kind": { "const": "add_text_layer" },
+            "pageIds": { "$ref": "#/$defs/pageIds" },
+            "language": { "type": "string", "minLength": 1, "default": "eng" },
+            "mode": { "enum": ["lstm", "legacy"], "default": "lstm" },
+            "dpi": { "type": "integer", "minimum": 1, "default": 300 },
+            "minConfidence": { "type": "number", "minimum": 0, "maximum": 100, "default": 0 }
+          }
         }
       ]
     }

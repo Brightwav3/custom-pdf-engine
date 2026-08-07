@@ -20,6 +20,7 @@ from pdfengine.errors import (
 
 from .engine import PdfEngine
 from .models import (
+    AddTextLayer,
     CropPages,
     DeletePages,
     DocumentInfo,
@@ -187,6 +188,22 @@ def parse_operation(payload: object) -> Operation:
                 _string(payload, "sourceSessionId"),
                 _page_ids(payload),
                 after_page_id=_string(payload, "afterPageId", required=False),
+            )
+        if kind == "add_text_layer":
+            _reject_unknown(
+                payload,
+                {"kind", "pageIds", "language", "mode", "dpi", "minConfidence"},
+                "operation",
+            )
+            dpi = payload.get("dpi", 300)
+            if isinstance(dpi, bool) or not isinstance(dpi, int):
+                raise InvalidRequestError("dpi must be an integer", field="dpi")
+            return AddTextLayer(
+                _page_ids(payload),
+                language=_string(payload, "language", required=False) or "eng",
+                mode=_string(payload, "mode", required=False) or "lstm",
+                dpi=dpi,
+                min_confidence=_number(payload, "minConfidence", 0.0),
             )
     except ValueError as exc:
         raise InvalidRequestError(str(exc), field="operation") from exc
