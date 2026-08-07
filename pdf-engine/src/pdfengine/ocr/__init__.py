@@ -10,8 +10,12 @@ from .base import (
     OcrEngine,
 )
 from .models import OcrChar, OcrPage, OcrWord
+from .tesseract import TesseractOcr, pad_png, parse_tsv
 
 __all__ = [
+    "TesseractOcr",
+    "pad_png",
+    "parse_tsv",
     "DEFAULT_DPI",
     "DEFAULT_PSM",
     "MODES",
