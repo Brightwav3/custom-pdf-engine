@@ -18,7 +18,9 @@ def build_parser() -> argparse.ArgumentParser:
         # `prog` is the installed command name and stays `pdfengine`; only the
         # human-facing description names the product.
         prog="pdfengine",
-        description="FreeDF — a local-first PDF engine.",
+        # ASCII on purpose: this string is printed to a console whose encoding
+        # is not ours to choose, and an em dash comes out as "?" on cp1252.
+        description="FreeDF - a local-first PDF engine.",
     )
     parser.add_argument("--version", action="version", version=__version__)
     commands = parser.add_subparsers(dest="command", required=True)
