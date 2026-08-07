@@ -199,6 +199,42 @@ identifier deliberately stay `pdfengine` — see the deferral below.
 - **The unauthenticated artifact GET route.** Documented rather than fixed. It
   is safe on loopback with one trusted caller and unsafe the moment it is not.
 
+### Known follow-ups
+
+Raised by the final whole-branch review, triaged as non-blocking. Recorded here
+because each is a real thing, not a hypothetical.
+
+- **Nothing validates a real response against a served schema.** There is no
+  `jsonschema` dependency and no test that feeds a dispatcher response to
+  `response.json`. The schemas are prose that happens to be JSON. This is
+  precisely the blind spot that let `ocr_error` go missing from the error enum
+  until the final review caught it: exposing `add_text_layer` over JSON made the
+  code emittable on the wire, and the schema was never updated to match. A pure
+  set-comparison test between `errors.py` and the enum needs no new dependency.
+- **`CacheArtifact` is dead code.** It is defined and unit-tested, but no
+  production call site uses it — `render` registers a `MemoryArtifact` even
+  though the design describes rendered pages as the cache-backed case. Either
+  wire it in or remove it.
+- **The `thumbnail` artifact kind is never emitted.** It is declared in
+  `ARTIFACT_KINDS` and frozen into the surface manifest, but `render_thumbnail`
+  registers no artifact. Emit it or document it as reserved.
+- **`SessionStateError.attempted` is never populated.** No call site passes it,
+  so the `details` filter always drops it. Populate it or drop it from the
+  design.
+- **Rendered artifacts are unbounded in memory** for a session's life. Not a
+  regression — the pre-v0.2 dispatcher dict had the same property — but `render`
+  now registers on every call.
+- **`__version__` is maintained separately from `pyproject.toml`.** The two
+  agree today and a test pins the `pyproject` value, but nothing asserts they
+  match each other.
+- **A closed *import-source* session still raises `session_not_found`.**
+  `_with_import_sources` and `_origin_session` predate the lifecycle contract.
+  Fixing it needs a `details` shape carrying `sourceSessionId`, which v0.2 never
+  designed.
+- **Two test-hygiene items.** The dependency tier gates call the adapters'
+  private `_resolve_executable()`, and the parity harness's `normalized()`
+  blanket-collapses any string ending `.pdf`/`.png`.
+
 ---
 
 ## Decisions and why
