@@ -42,6 +42,7 @@ SCHEMA_NAMES = (
     "operation-request",
     "save-request",
     "response",
+    "capabilities-response",
 )
 COMMANDS = (
     "open",
@@ -322,7 +323,14 @@ class CommandDispatcher:
         }
 
     def _command_capabilities(self, request: Mapping[str, Any]) -> dict:
-        return {"capabilities": self.engine.capabilities()}
+        _reject_unknown(
+            request,
+            {"apiVersion", "requestId", "command", "sessionId"},
+            "request",
+        )
+        session_id = _string(request, "sessionId", required=False)
+        session = self.engine.session(session_id) if session_id else None
+        return {"capabilities": self.engine.capabilities(session)}
 
     def _command_render(self, request: Mapping[str, Any]) -> dict:
         _reject_unknown(

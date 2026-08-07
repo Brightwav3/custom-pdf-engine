@@ -1,0 +1,145 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pdfengine.local/schemas/v1/capabilities-response.json",
+  "title": "Capabilities result",
+  "description": "The capabilities object returned by the capabilities command. Engine-wide sections are always present; document and allowedCommands appear only when the request carried a sessionId.",
+  "type": "object",
+  "required": ["preview", "ocr", "operations", "save", "filters"],
+  "additionalProperties": false,
+  "properties": {
+    "preview": {
+      "$ref": "#/$defs/capability",
+      "description": "Whether pages can be rasterized right now."
+    },
+    "ocr": {
+      "type": "object",
+      "description": "Whether text can be recognized right now, and with what.",
+      "required": ["state", "detail", "engine", "modes", "languages"],
+      "additionalProperties": false,
+      "properties": {
+        "state": { "$ref": "#/$defs/state" },
+        "detail": { "type": "string" },
+        "engine": {
+          "type": "string",
+          "description": "Name and version of the installed recognizer, empty when there is none."
+        },
+        "modes": { "type": "array", "items": { "type": "string" } },
+        "languages": {
+          "type": "array",
+          "description": "Installed language codes. Empty when OCR is not ready.",
+          "items": { "type": "string" }
+        }
+      }
+    },
+    "operations": {
+      "type": "array",
+      "description": "Every operation kind this version accepts, each with its own readiness so a caller never learns a limit by catching an error mid-batch.",
+      "items": {
+        "type": "object",
+        "required": ["kind", "state", "detail", "safe", "requires", "schema"],
+        "additionalProperties": false,
+        "properties": {
+          "kind": { "type": "string" },
+          "state": { "$ref": "#/$defs/state" },
+          "detail": {
+            "type": "string",
+            "description": "Human-readable reason when not ready, empty when ready."
+          },
+          "safe": { "type": "boolean" },
+          "requires": {
+            "type": "array",
+            "description": "Engine-wide capabilities this operation depends on.",
+            "items": { "type": "string" }
+          },
+          "schema": { "type": "string" }
+        }
+      }
+    },
+    "save": {
+      "type": "object",
+      "required": ["fullRewriteOnly", "inPlaceRequiresOptIn"],
+      "additionalProperties": false,
+      "properties": {
+        "fullRewriteOnly": { "type": "boolean" },
+        "inPlaceRequiresOptIn": { "type": "boolean" }
+      }
+    },
+    "filters": {
+      "type": "object",
+      "description": "Stream filters this version can decode, named without their leading slash.",
+      "required": ["decodable"],
+      "additionalProperties": false,
+      "properties": {
+        "decodable": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "document": { "$ref": "#/$defs/document" },
+    "read": {
+      "$ref": "#/$defs/document",
+      "description": "Deprecated alias of document, retained because removing a field is forbidden. Identical content."
+    },
+    "allowedCommands": {
+      "type": "array",
+      "description": "Commands that may be issued with this open session. Present only alongside document.",
+      "items": { "type": "string" }
+    }
+  },
+  "dependentRequired": {
+    "document": ["read", "allowedCommands"],
+    "read": ["document"],
+    "allowedCommands": ["document"]
+  },
+  "$defs": {
+    "state": {
+      "type": "string",
+      "enum": ["ready", "blocked", "unavailable", "error"]
+    },
+    "capability": {
+      "type": "object",
+      "required": ["state", "detail"],
+      "additionalProperties": false,
+      "properties": {
+        "state": { "$ref": "#/$defs/state" },
+        "detail": {
+          "type": "string",
+          "description": "Human-readable reason when not ready, empty when ready."
+        }
+      }
+    },
+    "document": {
+      "type": "object",
+      "description": "What this specific document can be read for, as opposed to edited into. Present only when a sessionId was supplied.",
+      "required": ["structuralEdit", "textContent"],
+      "additionalProperties": false,
+      "properties": {
+        "structuralEdit": {
+          "$ref": "#/$defs/capability",
+          "description": "Reordering, deleting, rotating, cropping, importing and saving. Always ready: these copy stream bytes through without decoding them."
+        },
+        "textContent": {
+          "type": "object",
+          "description": "Anything that must look inside stream bytes. Blocked when the pages reach a stream whose filters this version cannot decode.",
+          "required": ["state", "detail", "filters", "objectCount"],
+          "additionalProperties": false,
+          "properties": {
+            "state": { "$ref": "#/$defs/state" },
+            "detail": {
+              "type": "string",
+              "description": "Human-readable reason when blocked, empty when ready."
+            },
+            "filters": {
+              "type": "array",
+              "description": "Sorted distinct names of the filters that could not be decoded. Empty when ready.",
+              "items": { "type": "string" }
+            },
+            "objectCount": {
+              "type": "integer",
+              "minimum": 0,
+              "description": "Distinct stream objects carrying those filters. Zero when ready."
+            }
+          }
+        }
+      }
+    }
+  }
+}
