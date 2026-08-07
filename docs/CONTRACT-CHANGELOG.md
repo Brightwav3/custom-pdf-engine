@@ -40,6 +40,22 @@ what may change within a version.
   detail are new. This is a changed error code for an existing situation, and it
   is listed here rather than under "Added" because a client that switched on
   `session_not_found` to mean "closed" must be updated.
+- `undo` and `redo` now reject unknown request fields with `invalid_request` and
+  `details.field` naming the offending key. They previously accepted them
+  silently, so `{"command": "undo", "sessionId": ..., "bogusField": 1}` appeared
+  to succeed. Every sibling command — `open`, `inspect`, `capabilities`,
+  `render`, `apply`, `save`, `artifact`, `close` — already rejected them; these
+  two were an oversight, not a designed exemption.
+
+  This is called out here rather than filed under "Added" because it is
+  strictly a tightening of validation, and the policy says tightening forces a
+  new version. That rule is being overruled for this one case deliberately: it
+  corrects an inconsistency rather than changing an intended behaviour, and no
+  caller can reasonably have depended on `undo` swallowing a typo'd field — the
+  realistic effect of the old behaviour was a malformed request that looked
+  like it worked. A caller sending extra fields to `undo` or `redo` today will
+  start seeing `invalid_request`, which is the point.
+
 - A missing Tesseract or Poppler installation now reports `unavailable` rather
   than `blocked`. The adapters in `ocr/tesseract.py` and `rendering/poppler.py`
   changed their missing-executable path accordingly.

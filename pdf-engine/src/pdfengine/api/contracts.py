@@ -395,6 +395,9 @@ class CommandDispatcher:
         }
 
     def _command_undo(self, request: Mapping[str, Any]) -> dict:
+        _reject_unknown(
+            request, {"apiVersion", "requestId", "command", "sessionId"}, "request"
+        )
         session = self._session(request)
         self.engine.undo(session)
         return self._command_inspect(
@@ -402,6 +405,9 @@ class CommandDispatcher:
         )
 
     def _command_redo(self, request: Mapping[str, Any]) -> dict:
+        _reject_unknown(
+            request, {"apiVersion", "requestId", "command", "sessionId"}, "request"
+        )
         session = self._session(request)
         self.engine.redo(session)
         return self._command_inspect(
