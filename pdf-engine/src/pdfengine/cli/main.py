@@ -15,7 +15,10 @@ from .agent import run_agent
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        prog="pdfengine", description="Local-first PDF engine."
+        # `prog` is the installed command name and stays `pdfengine`; only the
+        # human-facing description names the product.
+        prog="pdfengine",
+        description="FreeDF — a local-first PDF engine.",
     )
     parser.add_argument("--version", action="version", version=__version__)
     commands = parser.add_subparsers(dest="command", required=True)

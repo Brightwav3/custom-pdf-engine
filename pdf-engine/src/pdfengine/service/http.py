@@ -12,6 +12,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from pdfengine import __version__
 from pdfengine.api.contracts import API_VERSION, CommandDispatcher, failure, schema_bytes
 from pdfengine.errors import InvalidRequestError
 
@@ -22,7 +23,10 @@ DRAIN_LIMIT_BYTES = 16 * 1024 * 1024
 
 
 class _Handler(BaseHTTPRequestHandler):
-    server_version = "pdfengine/0.1"
+    # Read from the package rather than hard-coded: the old literal said
+    # "pdfengine/0.1" long after 0.2 shipped, because nothing made the two
+    # move together.
+    server_version = f"FreeDF/{__version__}"
     protocol_version = "HTTP/1.1"
 
     @property
