@@ -19,7 +19,11 @@ pdfengine = ["schemas/*/*.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+pythonpath = ["src", "tests", "tests/support"]
+markers = [
+    "requires_preview: needs a real Poppler installation (pdftoppm)",
+    "requires_ocr: needs a real Tesseract installation",
+]
 # No -q here on purpose. The documented command is `pytest -q`, and a -q in
 # addopts would make that -qq, which suppresses the pass/fail summary line
 # entirely — leaving the one number anyone actually wants invisible.

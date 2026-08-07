@@ -14,7 +14,7 @@ from pdfengine.api.contracts import API_VERSION, CommandDispatcher, schema_bytes
 from pdfengine.cli.agent import run_agent
 from pdfengine.service.http import create_server
 
-from test_engine import StubRenderer
+from support.fakes import StubRenderer
 
 
 def _dispatcher(tmp_path, name: str) -> CommandDispatcher:
