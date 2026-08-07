@@ -212,6 +212,8 @@ def _copied_page(graph: _Graph, reader: PdfReader, page: ProjectedPage) -> PdfDi
     if PdfName("Contents") not in entries:
         entries[PdfName("Contents")] = PdfReference(_blank_contents(graph), 0)
 
+    _attach_text_layer(graph, reader, page, source, entries)
+
     entries[PdfName("Type")] = PdfName("Page")
     entries[PdfName("Parent")] = PdfReference(_PAGE_TREE, 0)
     entries[PdfName("MediaBox")] = _box(page.media_box)
@@ -220,6 +222,150 @@ def _copied_page(graph: _Graph, reader: PdfReader, page: ProjectedPage) -> PdfDi
     if page.rotation:
         entries[PdfName("Rotate")] = page.rotation
     return PdfDictionary(entries)
+
+
+# -- OCR text layer -------------------------------------------------------
+
+
+def _attach_text_layer(
+    graph: _Graph,
+    reader: PdfReader,
+    page: ProjectedPage,
+    source: PdfDictionary,
+    entries: dict[PdfName, object],
+) -> None:
+    """Append the invisible OCR layer to this page, if it has one.
+
+    The layer is *added* to the page: the original content stream is kept, in
+    its original order, and the new stream is appended after it.
+    """
+
+    from pdfengine.ocr.layout import place_words
+    from pdfengine.writing.textlayer import build_text_layer, free_resource_name
+
+    request = page.text_layer
+    if request is None or request.recognized is None:
+        return
+
+    filtered = request.recognized.above_confidence(request.min_confidence)
+    if not filtered.words:
+        return
+
+    placed = place_words(
+        filtered,
+        media_box=page.media_box,
+        crop_box=page.crop_box,
+        rotation=page.rotation,
+    )
+    if not placed:
+        return
+
+    resources = entries.get(PdfName("Resources"))
+    name = free_resource_name(_font_names(graph, resources))
+    layer = build_text_layer(placed, rotation=page.rotation, resource_name=name)
+    if layer.is_empty:
+        return
+
+    # Four consecutive numbers: the Type0 font, its descendant, the descriptor,
+    # and the ToUnicode stream, exactly as GlyphlessFont.objects lays them out.
+    first = graph.allocate()
+    for _ in range(3):
+        graph.allocate()
+    graph.objects.update(layer.font.objects(first))
+
+    content_number = graph.allocate()
+    graph.objects[content_number] = PdfStream(
+        PdfDictionary({PdfName("Length"): len(layer.content)}), layer.content
+    )
+
+    entries[PdfName("Resources")] = _with_font(
+        graph, resources, name, PdfReference(first, 0)
+    )
+    entries[PdfName("Contents")] = _contents_with_layer(
+        graph, reader, page, source, entries.get(PdfName("Contents")), content_number
+    )
+
+
+def _font_dictionary(graph: _Graph, resources: object) -> PdfDictionary | None:
+    """The already-rewritten ``/Font`` dictionary of ``resources``, if any."""
+
+    if isinstance(resources, PdfReference):
+        resources = graph.objects.get(resources.object_number)
+    if not isinstance(resources, PdfDictionary):
+        return None
+    fonts = resources.entries.get(PdfName("Font"))
+    if isinstance(fonts, PdfReference):
+        fonts = graph.objects.get(fonts.object_number)
+    return fonts if isinstance(fonts, PdfDictionary) else None
+
+
+def _font_names(graph: _Graph, resources: object) -> tuple[str, ...]:
+    fonts = _font_dictionary(graph, resources)
+    if fonts is None:
+        return ()
+    return tuple(name.value for name in fonts.entries)
+
+
+def _with_font(
+    graph: _Graph, resources: object, name: str, font: PdfReference
+) -> object:
+    """Add ``name -> font`` to a resource dictionary, following indirection.
+
+    Everything reachable here is already this writer's own copy, so an
+    indirect ``/Resources`` or ``/Font`` is updated in place rather than
+    duplicated — which keeps any other page sharing them seeing one object.
+    """
+
+    entry = PdfName(name)
+
+    if isinstance(resources, PdfReference):
+        target = graph.objects.get(resources.object_number)
+        graph.objects[resources.object_number] = _with_font(
+            graph, target, name, font
+        )
+        return resources
+
+    existing = resources.entries if isinstance(resources, PdfDictionary) else {}
+    fonts = existing.get(PdfName("Font"))
+
+    if isinstance(fonts, PdfReference):
+        target = graph.objects.get(fonts.object_number)
+        merged = target.entries if isinstance(target, PdfDictionary) else {}
+        graph.objects[fonts.object_number] = PdfDictionary({**merged, entry: font})
+        return PdfDictionary(dict(existing))
+
+    merged = fonts.entries if isinstance(fonts, PdfDictionary) else {}
+    return PdfDictionary(
+        {**existing, PdfName("Font"): PdfDictionary({**merged, entry: font})}
+    )
+
+
+def _contents_with_layer(
+    graph: _Graph,
+    reader: PdfReader,
+    page: ProjectedPage,
+    source: PdfDictionary,
+    rewritten: object,
+    layer_number: int,
+) -> PdfArray:
+    """The page's contents with the layer appended, original streams first.
+
+    ``/Contents`` may be one stream, a reference to one, an inline array, or a
+    reference to an array. All four have to end up as a flat array, because an
+    array holding a reference to another array is not a valid content list.
+    """
+
+    layer = PdfReference(layer_number, 0)
+    raw = source.entries.get(PdfName("Contents"))
+    if raw is None:
+        return PdfArray((rewritten, layer) if rewritten is not None else (layer,))
+
+    resolved = reader.resolve(raw) if isinstance(raw, PdfReference) else raw
+    if isinstance(resolved, PdfArray):
+        session = page.source_session_id
+        items = tuple(graph.rewrite(session, reader, item) for item in resolved.items)
+        return PdfArray(items + (layer,))
+    return PdfArray((rewritten, layer))
 
 
 def _blank_page(graph: _Graph, page: ProjectedPage) -> PdfDictionary:

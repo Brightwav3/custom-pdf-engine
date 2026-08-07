@@ -13,6 +13,7 @@ from dataclasses import dataclass, replace
 from typing import Mapping, Sequence
 
 from pdfengine.api.models import (
+    AddTextLayer,
     CropPages,
     DeletePages,
     ExtractPages,
@@ -26,6 +27,52 @@ from pdfengine.api.models import (
 )
 from pdfengine.document.pages import DocumentModel, PageRecord
 from pdfengine.errors import InvalidOperationError, UnsupportedOperationError
+from pdfengine.ocr.models import OcrPage
+
+
+@dataclass(frozen=True)
+class TextLayerRequest:
+    """What was asked of the recognizer, and its answer once it has run.
+
+    Recognition needs a renderer and a subprocess, so it cannot happen during
+    projection. Applying :class:`~pdfengine.api.models.AddTextLayer` therefore
+    only records the request; :class:`~pdfengine.api.engine.PdfEngine` performs
+    the recognition and hands the result back through
+    :meth:`DocumentState.with_recognition`, which re-projection then merges
+    into ``recognized``.
+    """
+
+    language: str = "eng"
+    mode: str = "lstm"
+    dpi: int = 300
+    min_confidence: float = 0.0
+    recognized: OcrPage | None = None
+
+    @property
+    def pending(self) -> bool:
+        """Whether this page still needs to be recognized."""
+
+        return self.recognized is None
+
+    def matches(self, page: OcrPage) -> bool:
+        """Whether ``page`` was recognized under exactly these settings.
+
+        ``min_confidence`` is deliberately not compared: it filters words when
+        the layer is written, so changing it must not force a re-recognition.
+        """
+
+        return (
+            page.language == self.language
+            and page.mode == self.mode
+            and page.dpi == self.dpi
+        )
+
+    def words(self) -> tuple:
+        """The recognized words at or above ``min_confidence``."""
+
+        if self.recognized is None:
+            return ()
+        return self.recognized.above_confidence(self.min_confidence).words
 
 
 @dataclass(frozen=True)
@@ -38,6 +85,7 @@ class ProjectedPage:
     crop_box: tuple[float, float, float, float] | None
     source_session_id: str | None = None
     source: PageRecord | None = None
+    text_layer: TextLayerRequest | None = None
 
     @property
     def is_blank(self) -> bool:
@@ -74,12 +122,21 @@ class DocumentState:
     operations: tuple[Operation, ...] = ()
     cursor: int = 0
     sources: Mapping[str, tuple[ProjectedPage, ...]] = None  # type: ignore[assignment]
+    recognitions: Mapping[str, OcrPage] = None  # type: ignore[assignment]
+    """Recognition results by page ID, supplied from outside the projection.
+
+    Kept beside the operation log rather than inside it: the log stays a record
+    of what the user asked for, replayable without a recognizer, while these
+    are cached answers that projection merges in when they still match what the
+    operation asked for.
+    """
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "base_pages", tuple(self.base_pages))
         object.__setattr__(self, "operations", tuple(self.operations))
         object.__setattr__(self, "base_metadata", dict(self.base_metadata or {}))
         object.__setattr__(self, "sources", dict(self.sources or {}))
+        object.__setattr__(self, "recognitions", dict(self.recognitions or {}))
 
     # -- construction ----------------------------------------------------
 
@@ -101,13 +158,29 @@ class DocumentState:
         )
         return replace(self, sources=sources)
 
+    def with_recognition(self, page_id: str, page: OcrPage) -> "DocumentState":
+        """Attach a recognition result for ``page_id``, computed elsewhere."""
+
+        recognitions = dict(self.recognitions)
+        recognitions[page_id] = page
+        return replace(self, recognitions=recognitions)
+
     # -- projection ------------------------------------------------------
 
     def projected_pages(self) -> tuple[ProjectedPage, ...]:
         pages = self.base_pages
         for operation in self.operations[: self.cursor]:
-            pages = _project(operation, pages, self.sources)
+            pages = _project(operation, pages, self.sources, self.recognitions)
         return pages
+
+    def pending_text_layers(self) -> tuple[ProjectedPage, ...]:
+        """Projected pages that carry a text layer request not yet recognized."""
+
+        return tuple(
+            page
+            for page in self.projected_pages()
+            if page.text_layer is not None and page.text_layer.pending
+        )
 
     def projected_metadata(self) -> dict[str, str | None]:
         metadata = dict(self.base_metadata)
@@ -125,7 +198,7 @@ class DocumentState:
     def apply(self, operation: Operation) -> "DocumentState":
         """Return a new state with ``operation`` appended after validation."""
 
-        _project(operation, self.projected_pages(), self.sources)
+        _project(operation, self.projected_pages(), self.sources, self.recognitions)
         return replace(
             self,
             operations=self.operations[: self.cursor] + (operation,),
@@ -171,7 +244,31 @@ def _project(
     operation: Operation,
     pages: tuple[ProjectedPage, ...],
     sources: Mapping[str, tuple[ProjectedPage, ...]],
+    recognitions: Mapping[str, OcrPage] | None = None,
 ) -> tuple[ProjectedPage, ...]:
+    if isinstance(operation, AddTextLayer):
+        recognitions = recognitions or {}
+        _require_known(pages, operation.page_ids)
+        targets = set(operation.page_ids)
+        layered = []
+        for page in pages:
+            if page.page_id not in targets:
+                layered.append(page)
+                continue
+            request = TextLayerRequest(
+                language=operation.language,
+                mode=operation.mode,
+                dpi=operation.dpi,
+                min_confidence=operation.min_confidence,
+            )
+            recognized = recognitions.get(page.page_id)
+            # A result recognized under different settings is not an answer to
+            # this request, so it is left out and the page stays pending.
+            if recognized is not None and request.matches(recognized):
+                request = replace(request, recognized=recognized)
+            layered.append(replace(page, text_layer=request))
+        return tuple(layered)
+
     if isinstance(operation, RotatePages):
         _require_known(pages, operation.page_ids)
         targets = set(operation.page_ids)

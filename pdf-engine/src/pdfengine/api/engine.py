@@ -10,15 +10,19 @@ from typing import Iterable, Sequence
 from pdfengine.editing.state import DocumentState, ProjectedPage
 from pdfengine.errors import (
     InvalidOperationError,
+    OcrUnavailableError,
     PdfEngineError,
     SessionNotFoundError,
     SourceChangedError,
 )
-from pdfengine.rendering.base import PageRenderer, RendererCapability
+from pdfengine.ocr.base import OcrCapability, OcrEngine
+from pdfengine.ocr.tesseract import TesseractOcr
+from pdfengine.rendering.base import DpiRenderer, PageRenderer, RendererCapability
 from pdfengine.rendering.cache import RenderCache
 from pdfengine.rendering.poppler import PopplerRenderer
 
 from .models import (
+    AddTextLayer,
     DocumentInfo,
     ImportPages,
     OPERATION_TYPES,
@@ -33,6 +37,25 @@ from .session import DocumentSession
 DEFAULT_THUMBNAIL_WIDTH = 180
 DEFAULT_PREVIEW_WIDTH = 1000
 
+_DEFAULT_OCR: OcrEngine | None = None
+
+
+def _default_ocr() -> OcrEngine:
+    """One shared Tesseract adapter for engines that did not bring their own.
+
+    Everything the adapter caches — where the executable is, which languages
+    are installed, whether legacy mode actually works — describes the machine
+    rather than any document. Probing that once per process instead of once per
+    :class:`PdfEngine` is therefore both correct and considerably cheaper: the
+    legacy probe runs a real recognition, and it does not get a different
+    answer for the second engine.
+    """
+
+    global _DEFAULT_OCR
+    if _DEFAULT_OCR is None:
+        _DEFAULT_OCR = TesseractOcr()
+    return _DEFAULT_OCR
+
 
 class PdfEngine:
     """Own every open document session, its cache, and its renderer."""
@@ -41,12 +64,14 @@ class PdfEngine:
         self,
         cache_root: str | Path | None = None,
         renderer: PageRenderer | None = None,
+        ocr: OcrEngine | None = None,
     ) -> None:
         if cache_root is None:
             cache_root = Path(tempfile.gettempdir()) / "pdfengine-cache"
         self._cache_root = Path(cache_root)
         self._cache_root.mkdir(parents=True, exist_ok=True)
         self._renderer = renderer if renderer is not None else PopplerRenderer()
+        self._ocr = ocr if ocr is not None else _default_ocr()
         self._sessions: dict[str, DocumentSession] = {}
 
     # -- lifecycle -------------------------------------------------------
@@ -103,10 +128,26 @@ class PdfEngine:
         except Exception as exc:  # a broken adapter must not crash the caller
             return RendererCapability("error", str(exc))
 
+    def ocr_capability(
+        self, language: str = "eng", mode: str = "lstm"
+    ) -> OcrCapability:
+        """Whether text can be recognized right now. Never raises.
+
+        A missing Tesseract is a fact about the machine, not a programming
+        error: it comes back as a ``blocked`` capability so a caller can grey
+        the feature out, exactly as a missing Poppler does for previews.
+        """
+
+        try:
+            return self._ocr.capability(language, mode)
+        except Exception as exc:  # a broken adapter must not crash the caller
+            return OcrCapability("error", str(exc))
+
     def capabilities(self, session: DocumentSession | str | None = None) -> dict:
         preview = self.renderer_capability()
         capabilities = {
             "preview": {"state": preview.state, "detail": preview.detail},
+            "ocr": self.ocr_capability().as_dict(),
             "operations": [
                 {
                     "kind": operation.kind,
@@ -198,8 +239,53 @@ class PdfEngine:
         session = self._as_session(session)
         state = self._with_import_sources(session, operations)
         state = state.apply_all(operations)
+        if any(isinstance(operation, AddTextLayer) for operation in operations):
+            # Recognition rasterizes pages and shells out to an OCR engine, so
+            # it lives here rather than in the projection: DocumentState.apply
+            # stays pure and replayable without a renderer on the machine.
+            state = self._recognize_text_layers(session, state)
         if not dry_run:
             session.state = state
+        return state
+
+    def _recognize_text_layers(
+        self, session: DocumentSession, state: DocumentState
+    ) -> DocumentState:
+        """Recognize every page whose text layer request is still pending."""
+
+        pending = state.pending_text_layers()
+        if not pending:
+            return state
+
+        if not isinstance(self._renderer, DpiRenderer):
+            raise OcrUnavailableError(
+                "the configured renderer cannot rasterize at an exact DPI, "
+                "which OCR requires"
+            )
+
+        source, indices, _ = self._preview_source_for(session, state)
+        for page in pending:
+            request = page.text_layer
+            assert request is not None
+            index = indices.get(page.page_id)
+            if index is None:
+                raise InvalidOperationError(
+                    f"page {page.page_id} cannot be rendered for recognition"
+                )
+            with tempfile.TemporaryDirectory() as directory:
+                output = Path(directory)
+                image_bytes = self._renderer.render_at_dpi(
+                    source, index, request.dpi, session.password, output
+                )
+                image = output / "ocr-page.png"
+                image.write_bytes(image_bytes)
+                recognized = self._ocr.recognize(
+                    image,
+                    dpi=request.dpi,
+                    language=request.language,
+                    mode=request.mode,
+                )
+            state = state.with_recognition(page.page_id, recognized)
         return state
 
     def undo(self, session: DocumentSession | str) -> DocumentState:
@@ -284,6 +370,11 @@ class PdfEngine:
     def _preview_source(
         self, session: DocumentSession
     ) -> tuple[Path, dict[str, int], str]:
+        return self._preview_source_for(session, session.state)
+
+    def _preview_source_for(
+        self, session: DocumentSession, state: DocumentState
+    ) -> tuple[Path, dict[str, int], str]:
         """Return (file to render, page_id -> page index in that file, state hash).
 
         An unedited session previews straight from its own file: nothing is
@@ -292,7 +383,6 @@ class PdfEngine:
         rotation, crop, blank pages and imported pages included.
         """
 
-        state = session.state
         if state.cursor == 0:
             return (
                 session.path,

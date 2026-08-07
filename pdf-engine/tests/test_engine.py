@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+import re
+import shutil
 from pathlib import Path
 
 import pytest
 
 from pdfengine import PdfEngine
 from pdfengine.api.models import (
+    AddTextLayer,
     CropPages,
     DeletePages,
     ImportPages,
@@ -473,3 +476,333 @@ def test_a_jpeg_document_still_reorders_saves_and_reopens(
     assert engine.capabilities(reopened)["read"]["textContent"]["filters"] == [
         "DCTDecode"
     ]
+
+
+# -- OCR text layer -------------------------------------------------------
+
+
+class StubOcr:
+    """A recognizer that returns a fixed answer without touching Tesseract."""
+
+    version = "stub-ocr-1"
+
+    def __init__(
+        self,
+        words=(("hello", (100.0, 200.0, 260.0, 240.0), 91.0),),
+        state: str = "ready",
+        detail: str = "stub",
+    ) -> None:
+        self._words = tuple(words)
+        self.state = state
+        self.detail = detail
+        self.calls: list[tuple[int, str, str]] = []
+
+    def capability(self, language: str = "eng", mode: str = "lstm"):
+        from pdfengine.ocr.base import OcrCapability
+
+        return OcrCapability(
+            self.state,
+            self.detail,
+            engine="stub 0.0",
+            modes=("lstm",) if self.state == "ready" else (),
+            languages=("eng",) if self.state == "ready" else (),
+        )
+
+    def languages(self) -> tuple[str, ...]:
+        return ("eng",)
+
+    def recognize(self, image, dpi=300, language="eng", mode="lstm", psm=3):
+        from pdfengine.ocr.models import OcrPage, OcrWord
+
+        self.calls.append((dpi, language, mode))
+        return OcrPage(
+            words=tuple(
+                OcrWord(text=text, box=box, confidence=confidence)
+                for text, box, confidence in self._words
+            ),
+            width=850,
+            height=1100,
+            dpi=dpi,
+            language=language,
+            mode=mode,
+            padding=0,
+        )
+
+
+class DpiStubRenderer(StubRenderer):
+    """A StubRenderer that also satisfies the DpiRenderer protocol."""
+
+    version = "stub-dpi-1"
+
+    def __init__(self, capability_state: str = "ready") -> None:
+        super().__init__(capability_state)
+        self.dpi_calls: list[tuple[int, int]] = []
+
+    def render_at_dpi(self, source, page_index, dpi, password, output_dir) -> bytes:
+        self.dpi_calls.append((page_index, dpi))
+        return make_png(40, 50)
+
+
+@pytest.fixture
+def ocr() -> StubOcr:
+    return StubOcr()
+
+
+@pytest.fixture
+def ocr_engine(tmp_path, ocr):
+    engine = PdfEngine(
+        cache_root=tmp_path / "ocr-cache", renderer=DpiStubRenderer(), ocr=ocr
+    )
+    yield engine
+    engine.close_all()
+
+
+def test_capabilities_report_an_ocr_section(ocr_engine) -> None:
+    section = ocr_engine.capabilities()["ocr"]
+
+    assert section["state"] == "ready"
+    assert section["engine"] == "stub 0.0"
+    assert section["modes"] == ["lstm"]
+    assert section["languages"] == ["eng"]
+
+
+def test_add_text_layer_is_advertised_as_an_operation(ocr_engine) -> None:
+    kinds = {entry["kind"] for entry in ocr_engine.capabilities()["operations"]}
+
+    assert "add_text_layer" in kinds
+
+
+def test_a_missing_ocr_engine_is_a_blocked_capability_not_a_crash(tmp_path) -> None:
+    engine = PdfEngine(
+        cache_root=tmp_path / "cache",
+        renderer=DpiStubRenderer(),
+        ocr=StubOcr(state="blocked", detail="Tesseract executable not found"),
+    )
+
+    section = engine.capabilities()["ocr"]
+
+    assert section["state"] == "blocked"
+    assert "not found" in section["detail"]
+    assert section["modes"] == []
+
+
+def test_a_broken_ocr_adapter_reports_an_error_rather_than_raising(tmp_path) -> None:
+    class Exploding:
+        version = "boom-1"
+
+        def capability(self, language="eng", mode="lstm"):
+            raise RuntimeError("adapter is broken")
+
+        def languages(self):
+            return ()
+
+        def recognize(self, image, dpi=300, language="eng", mode="lstm", psm=3):
+            raise RuntimeError("adapter is broken")
+
+    engine = PdfEngine(
+        cache_root=tmp_path / "cache", renderer=DpiStubRenderer(), ocr=Exploding()
+    )
+
+    section = engine.capabilities()["ocr"]
+
+    assert section["state"] == "error"
+    assert "broken" in section["detail"]
+
+
+def test_add_text_layer_projects_and_records_the_recognized_page(
+    ocr_engine, ocr, write_pdf
+) -> None:
+    session = ocr_engine.open_document(write_pdf(["alpha", "beta"]))
+    pages = [page.page_id for page in ocr_engine.inspect_document(session).pages]
+
+    state = ocr_engine.apply_operations(
+        session, [AddTextLayer(page_ids=(pages[1],), dpi=200)]
+    )
+    projected = {page.page_id: page for page in state.projected_pages()}
+
+    assert projected[pages[0]].text_layer is None
+    layer = projected[pages[1]].text_layer
+    assert layer is not None and not layer.pending
+    assert layer.recognized.words[0].text == "hello"
+    assert ocr.calls == [(200, "eng", "lstm")]
+
+
+def test_recognition_never_rasterizes_an_unrelated_page(ocr_engine, write_pdf) -> None:
+    session = ocr_engine.open_document(write_pdf(["alpha", "beta", "gamma"]))
+    pages = [page.page_id for page in ocr_engine.inspect_document(session).pages]
+
+    ocr_engine.apply_operations(session, [AddTextLayer(page_ids=(pages[1],))])
+
+    renderer = ocr_engine._renderer
+    assert [index for index, _ in renderer.dpi_calls] == [1]
+    # Previews are a separate concern; nothing here should have produced one.
+    assert renderer.calls == []
+
+
+def test_a_dry_run_recognizes_without_committing_the_state(
+    ocr_engine, ocr, write_pdf
+) -> None:
+    session = ocr_engine.open_document(write_pdf(["alpha"]))
+    page_id = ocr_engine.inspect_document(session).pages[0].page_id
+
+    state = ocr_engine.apply_operations(
+        session, [AddTextLayer(page_ids=(page_id,))], dry_run=True
+    )
+
+    assert state.projected_pages()[0].text_layer.recognized is not None
+    assert session.state.cursor == 0
+    assert len(ocr.calls) == 1
+
+
+def test_add_text_layer_saves_a_searchable_page(ocr_engine, write_pdf, tmp_path) -> None:
+    from test_textlayer import content_streams, page_fonts
+
+    session = ocr_engine.open_document(write_pdf(["alpha"]))
+    page_id = ocr_engine.inspect_document(session).pages[0].page_id
+    ocr_engine.apply_operations(session, [AddTextLayer(page_ids=(page_id,))])
+
+    target = ocr_engine.save(session, tmp_path / "searchable.pdf")
+
+    streams = content_streams(target)
+    assert b"(alpha) Tj" in streams[0]
+    assert b"3 Tr" in streams[-1]
+    assert "OCR" in page_fonts(target)
+
+
+def test_an_unknown_page_id_is_rejected_before_any_recognition(
+    ocr_engine, ocr, write_pdf
+) -> None:
+    session = ocr_engine.open_document(write_pdf(["alpha"]))
+
+    with pytest.raises(InvalidOperationError, match="unknown page ID"):
+        ocr_engine.apply_operations(session, [AddTextLayer(page_ids=("page_absent",))])
+
+    assert ocr.calls == []
+
+
+def test_a_renderer_without_dpi_support_is_a_clear_ocr_error(
+    tmp_path, write_pdf, ocr
+) -> None:
+    from pdfengine.errors import OcrUnavailableError
+
+    engine = PdfEngine(cache_root=tmp_path / "cache", renderer=StubRenderer(), ocr=ocr)
+    session = engine.open_document(write_pdf(["alpha"]))
+    page_id = engine.inspect_document(session).pages[0].page_id
+
+    with pytest.raises(OcrUnavailableError, match="exact DPI"):
+        engine.apply_operations(session, [AddTextLayer(page_ids=(page_id,))])
+
+
+def test_changing_the_recognition_settings_reruns_recognition(
+    ocr_engine, ocr, write_pdf
+) -> None:
+    session = ocr_engine.open_document(write_pdf(["alpha"]))
+    page_id = ocr_engine.inspect_document(session).pages[0].page_id
+
+    ocr_engine.apply_operations(session, [AddTextLayer(page_ids=(page_id,), dpi=150)])
+    ocr_engine.apply_operations(session, [AddTextLayer(page_ids=(page_id,), dpi=400)])
+
+    # A result recognized at 150 DPI is not an answer to a request for 400.
+    assert [dpi for dpi, _, _ in ocr.calls] == [150, 400]
+
+
+def test_changing_only_the_confidence_floor_reuses_the_recognition(
+    ocr_engine, ocr, write_pdf
+) -> None:
+    session = ocr_engine.open_document(write_pdf(["alpha"]))
+    page_id = ocr_engine.inspect_document(session).pages[0].page_id
+
+    ocr_engine.apply_operations(session, [AddTextLayer(page_ids=(page_id,))])
+    ocr_engine.apply_operations(
+        session, [AddTextLayer(page_ids=(page_id,), min_confidence=80.0)]
+    )
+
+    # min_confidence filters at write time, so it must not force a re-run.
+    assert len(ocr.calls) == 1
+
+
+# -- end to end, on a real install ----------------------------------------
+
+
+FIXTURES = Path(__file__).resolve().parents[1] / "fixtures"
+
+
+def _tesseract_ready() -> bool:
+    from pdfengine.ocr.tesseract import TesseractOcr
+
+    return TesseractOcr().capability("eng", "lstm").ready
+
+
+tesseract_missing = pytest.mark.skipif(
+    shutil.which("pdftoppm") is None or not _tesseract_ready(),
+    reason="a real Poppler and Tesseract install is required",
+)
+
+
+@tesseract_missing
+def test_ocr_makes_a_real_scanned_page_searchable(tmp_path) -> None:
+    """Render, recognize, save, reopen - and find the words in the output.
+
+    This is the test the feature exists for: everything else uses a stub, so
+    only this one proves that a real recognizer's output survives the
+    transform, the glyphless font and the writer intact.
+    """
+
+    from pdfengine.parser.reader import PdfReader
+    from pdfengine.parser.values import PdfName
+    from pdfengine.rendering.poppler import PopplerRenderer
+    from test_textlayer import content_streams, page_fonts
+
+    source = tmp_path / "one-page.pdf"
+    shutil.copyfile(FIXTURES / "basic" / "one-page.pdf", source)
+
+    engine = PdfEngine(cache_root=tmp_path / "cache", renderer=PopplerRenderer())
+    try:
+        session = engine.open_document(source)
+        page_id = engine.inspect_document(session).pages[0].page_id
+
+        state = engine.apply_operations(session, [AddTextLayer(page_ids=(page_id,))])
+        recognized = state.projected_pages()[0].text_layer.recognized
+        assert recognized is not None
+        assert "one" in recognized.text and "page" in recognized.text
+
+        target = engine.save(session, tmp_path / "searchable.pdf")
+    finally:
+        engine.close_all()
+
+    streams = content_streams(target)
+    assert b"3 Tr" in streams[-1]
+
+    # The recognized text has to be recoverable the way a viewer recovers it:
+    # decode the shown CIDs through the font's own ToUnicode CMap.
+    reopened = PdfReader(target)
+    font = reopened.resolve(page_fonts(target)["OCR"])
+    cmap = reopened.resolve(font.entries[PdfName("ToUnicode")]).data
+    extracted = _extract_text(streams[-1].decode("ascii"), _bfchar_map(cmap))
+
+    assert "one" in extracted
+    assert "page" in extracted
+
+
+def _bfchar_map(cmap: bytes) -> dict[int, str]:
+    """Parse the bfchar entries of a ToUnicode CMap into CID -> character."""
+
+    text = cmap.decode("ascii")
+    mapping: dict[int, str] = {}
+    body = text.split("endcodespacerange", 1)[-1]
+    for cid, value in re.findall(r"<([0-9A-Fa-f]{4})>\s*<([0-9A-Fa-f]+)>", body):
+        mapping[int(cid, 16)] = bytes.fromhex(value).decode("utf-16-be")
+    return mapping
+
+
+def _extract_text(stream: str, mapping: dict[int, str]) -> str:
+    out: list[str] = []
+    for hex_text in re.findall(r"<([0-9A-F]*)> Tj", stream):
+        raw = bytes.fromhex(hex_text)
+        out.append(
+            "".join(
+                mapping.get(int.from_bytes(raw[index : index + 2], "big"), "")
+                for index in range(0, len(raw), 2)
+            )
+        )
+    return " ".join(out)

@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import ClassVar, Mapping, Union
 from uuid import uuid4
 
+from pdfengine.ocr.base import MODES
+
 
 _ALLOWED_ROTATIONS = (90, 180, 270)
 _METADATA_FIELDS = ("title", "author", "subject", "keywords", "creator", "producer")
@@ -184,6 +186,38 @@ class ImportPages:
         object.__setattr__(self, "page_ids", _page_id_tuple(self.page_ids, "page_ids"))
 
 
+@dataclass(frozen=True)
+class AddTextLayer:
+    """Recognize each named page and lay invisible, searchable text over it.
+
+    Nothing about the page's appearance changes: the recognized words are drawn
+    in render mode 3, which rasterizes no glyph. Recognition itself is not
+    performed here — the operation only records *what* to recognize, so that
+    projecting a state stays free of subprocesses and file reads.
+    """
+
+    page_ids: tuple[str, ...]
+    language: str = "eng"
+    mode: str = "lstm"
+    dpi: int = 300
+    min_confidence: float = 0.0
+    kind: ClassVar[str] = "add_text_layer"
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "page_ids", _page_id_tuple(self.page_ids, "page_ids"))
+        if not self.language or not isinstance(self.language, str):
+            raise ValueError("a language code is required")
+        if self.mode not in MODES:
+            raise ValueError(
+                f"unknown OCR mode {self.mode!r}; supported: " + ", ".join(MODES)
+            )
+        if self.dpi <= 0:
+            raise ValueError("dpi must be positive")
+        if not 0.0 <= float(self.min_confidence) <= 100.0:
+            raise ValueError("min_confidence must be between 0 and 100")
+        object.__setattr__(self, "min_confidence", float(self.min_confidence))
+
+
 Operation = Union[
     RotatePages,
     DeletePages,
@@ -193,6 +227,7 @@ Operation = Union[
     CropPages,
     SetMetadata,
     ImportPages,
+    AddTextLayer,
 ]
 
 OPERATION_TYPES: tuple[type, ...] = (
@@ -204,6 +239,7 @@ OPERATION_TYPES: tuple[type, ...] = (
     CropPages,
     SetMetadata,
     ImportPages,
+    AddTextLayer,
 )
 
 METADATA_FIELDS: tuple[str, ...] = _METADATA_FIELDS
