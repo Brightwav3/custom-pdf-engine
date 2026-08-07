@@ -1,13 +1,15 @@
 # Custom PDF Engine — Progress
 
-**Where things stand:** v0.1, real-world document support, and OCR are all
-built. The first two are merged; OCR is awaiting review.
+**Where things stand:** v0.1, real-world document support, OCR, and the v0.2
+integration release are all built. The v0.2 work closed the last gap between the
+Python API and the JSON surfaces, so all three surfaces are equivalent again.
 
 | Milestone | State | Tests |
 | --- | --- | --- |
 | v0.1 — parser, editing, rendering, writer, three public surfaces | merged, PR #1 | 242 |
 | 0 + 0b — real-world documents, correct previews, capability discovery, DPI and batch rendering | merged, PR #2 | 290 |
 | 9 — OCR searchable PDF | **open, PR #3** | 383 |
+| v0.2 — integration release: contract freeze, artifacts, session lifecycle, deployment docs | merged | 454 |
 
 ## Project
 
@@ -230,7 +232,7 @@ available and take different syntax.
 | 0 | Filter passthrough, preview correctness | — | merged |
 | 0b | Capability split, DPI and batch rendering | 0 | merged |
 | 9 | OCR searchable PDF | 0b | PR #3 |
-| 9b | Expose `AddTextLayer` over JSON, CLI, and HTTP | 9 | not started |
+| 9b | Expose `AddTextLayer` over JSON, CLI, and HTTP | 9 | done (v0.2) |
 | 1 | Content stream parser and font model | — | not started |
 | 2 | Text extraction and search | 1 | not started |
 | 3 | Text editing, span replace without reflow | 2 | not started |
@@ -238,14 +240,6 @@ available and take different syntax.
 | 6 | Form filling | — | not started |
 | 7 | Watermarks, headers, Bates numbering | 1 | not started |
 | 8 | Optimize: image downsampling, font subsetting | 0 | not started |
-
-### Known gap
-
-`AddTextLayer` works from Python but is not yet exposed through `contracts.py`,
-the CLI, or HTTP, so agents cannot call it over JSON. That breaks the project's
-own rule that all three surfaces stay equivalent, and the parity test does not
-catch it because it only exercises commands that already exist. Small and
-well-scoped — hence 9b above.
 
 ### Open questions
 

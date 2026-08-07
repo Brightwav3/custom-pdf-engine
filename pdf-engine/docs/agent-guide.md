@@ -154,6 +154,16 @@ The result has `width`, `height`, `cacheHit`, `contentType`, an inline
 `GET /v1/artifacts/<artifactId>` instead of decoding base64. Artifact IDs are
 opaque — cache paths are never exposed.
 
+On any surface, the `artifact` command re-fetches those bytes later:
+
+```json
+{"apiVersion":"v1","requestId":"r-2","command":"artifact","sessionId":"session_5f3c…","artifactId":"artifact_9b2e…"}
+```
+
+It answers with the artifact descriptor and base64 `bytes`, and it checks that
+the artifact belongs to the session asking. Prefer it over the HTTP GET route
+when more than one caller shares the process — the GET route does no such check.
+
 ### 3. Dry-run, then apply
 
 Send exactly the batch you intend to commit, with `"dryRun": true`. The
