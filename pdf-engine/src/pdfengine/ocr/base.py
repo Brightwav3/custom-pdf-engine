@@ -25,7 +25,20 @@ scan and a silently blank result.
 MODES: tuple[str, ...] = ("lstm", "legacy")
 OEM_BY_MODE = {"lstm": 1, "legacy": 0}
 
-CapabilityState = Literal["ready", "blocked", "error"]
+CAPABILITY_STATES: tuple[str, ...] = ("ready", "blocked", "unavailable", "error")
+"""The complete capability vocabulary, in escalating order of unhelpfulness.
+
+``ready``        engine and document both permit the operation.
+``blocked``      the engine supports it; this document or session blocks it.
+``unavailable``  this installation cannot provide it right now.
+``error``        the capability probe itself failed.
+
+The distinction between ``blocked`` and ``unavailable`` is what lets a caller
+tell "try a different document" from "install something", so it must not be
+collapsed.
+"""
+
+CapabilityState = Literal["ready", "blocked", "unavailable", "error"]
 
 
 @dataclass(frozen=True)

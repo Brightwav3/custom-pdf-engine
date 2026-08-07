@@ -159,7 +159,7 @@ class TesseractOcr:
     def _capability(self, language: str, mode: str) -> OcrCapability:
         if self._resolve_executable() is None:
             return OcrCapability(
-                "blocked", f"Tesseract executable not found: {self.executable}"
+                "unavailable", f"Tesseract executable not found: {self.executable}"
             )
 
         installed = self.languages()

@@ -134,8 +134,9 @@ class PdfEngine:
         """Whether text can be recognized right now. Never raises.
 
         A missing Tesseract is a fact about the machine, not a programming
-        error: it comes back as a ``blocked`` capability so a caller can grey
-        the feature out, exactly as a missing Poppler does for previews.
+        error: it comes back as an ``unavailable`` capability so a caller can
+        grey the feature out and say what to install, exactly as a missing
+        Poppler does for previews.
         """
 
         try:

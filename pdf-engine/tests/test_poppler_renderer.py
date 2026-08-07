@@ -127,7 +127,7 @@ def test_missing_executable_is_reported_as_a_capability_not_a_crash(tmp_path) ->
 
     capability = renderer.capability()
 
-    assert capability.state == "blocked"
+    assert capability.state == "unavailable"
     assert "not found" in capability.detail
     assert capability.ready is False
     with pytest.raises(RendererUnavailableError, match="not found"):

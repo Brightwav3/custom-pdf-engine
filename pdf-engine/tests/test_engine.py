@@ -471,16 +471,18 @@ def test_add_text_layer_is_advertised_as_an_operation(ocr_engine) -> None:
     assert "add_text_layer" in kinds
 
 
-def test_a_missing_ocr_engine_is_a_blocked_capability_not_a_crash(tmp_path) -> None:
+def test_a_missing_ocr_engine_is_an_unavailable_capability_not_a_crash(
+    tmp_path,
+) -> None:
     engine = PdfEngine(
         cache_root=tmp_path / "cache",
         renderer=DpiStubRenderer(),
-        ocr=StubOcr(state="blocked", detail="Tesseract executable not found"),
+        ocr=StubOcr(state="unavailable", detail="Tesseract executable not found"),
     )
 
     section = engine.capabilities()["ocr"]
 
-    assert section["state"] == "blocked"
+    assert section["state"] == "unavailable"
     assert "not found" in section["detail"]
     assert section["modes"] == []
 
