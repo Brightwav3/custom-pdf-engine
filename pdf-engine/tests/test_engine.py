@@ -22,6 +22,7 @@ from pdfengine.errors import (
     InvalidOperationError,
     PdfEngineError,
     SessionNotFoundError,
+    SessionStateError,
     SourceChangedError,
 )
 
@@ -322,7 +323,7 @@ def test_close_drops_the_password_and_deletes_the_cache(engine, write_pdf) -> No
 
     assert session.password is None
     assert not cache_dir.exists()
-    with pytest.raises(SessionNotFoundError):
+    with pytest.raises(SessionStateError):
         engine.inspect_document(session)
 
 

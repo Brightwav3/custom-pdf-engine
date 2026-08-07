@@ -106,7 +106,7 @@ def test_a_closed_session_reports_a_typed_error(agent, write_pdf) -> None:
         {"apiVersion": "v1", "requestId": "i", "command": "inspect", "sessionId": session_id},
     )
 
-    assert responses[1]["error"]["code"] == "session_not_found"
+    assert responses[1]["error"]["code"] == "session_invalid_state"
 
 
 def test_the_full_agent_workflow_saves_a_verified_copy(agent, write_pdf, tmp_path) -> None:

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tempfile
+import time
 from hashlib import sha256
 from pathlib import Path
 from typing import Iterable, Sequence
@@ -13,6 +14,7 @@ from pdfengine.errors import (
     OcrUnavailableError,
     PdfEngineError,
     SessionNotFoundError,
+    SessionStateError,
     SourceChangedError,
 )
 from pdfengine.ocr.base import OcrCapability, OcrEngine
@@ -31,7 +33,7 @@ from .models import (
     RenderResult,
     SaveOptions,
 )
-from .session import DocumentSession
+from .session import DocumentSession, SessionState, SessionTombstone
 
 
 DEFAULT_THUMBNAIL_WIDTH = 180
@@ -73,6 +75,7 @@ class PdfEngine:
         self._renderer = renderer if renderer is not None else PopplerRenderer()
         self._ocr = ocr if ocr is not None else _default_ocr()
         self._sessions: dict[str, DocumentSession] = {}
+        self._tombstones: dict[str, SessionTombstone] = {}
 
     # -- lifecycle -------------------------------------------------------
 
@@ -88,14 +91,33 @@ class PdfEngine:
 
     def session(self, session_id: str) -> DocumentSession:
         session = self._sessions.get(session_id)
-        if session is None or session.closed:
-            raise SessionNotFoundError(f"unknown or closed session: {session_id}")
-        return session
+        if session is not None and not session.closed:
+            return session
+        tombstone = self._tombstones.get(session_id)
+        if tombstone is not None:
+            raise SessionStateError(
+                f"session is closed: {session_id}",
+                session_id=session_id,
+                state=tombstone.state.value,
+                allowed=["open"],
+            )
+        raise SessionNotFoundError(f"unknown or closed session: {session_id}")
+
+    def tombstone(self, session_id: str) -> SessionTombstone:
+        """The record of a closed session. Raises if the ID was never issued."""
+
+        tombstone = self._tombstones.get(session_id)
+        if tombstone is None:
+            raise SessionNotFoundError(f"no closed session: {session_id}")
+        return tombstone
 
     def close(self, session: DocumentSession | str) -> None:
         session = self._as_session(session)
         session.close()
         self._sessions.pop(session.session_id, None)
+        self._tombstones[session.session_id] = SessionTombstone(
+            session_id=session.session_id, closed_at=time.time()
+        )
 
     def close_all(self) -> None:
         for session in list(self._sessions.values()):
@@ -357,7 +379,12 @@ class PdfEngine:
         if isinstance(session, str):
             return self.session(session)
         if session.closed:
-            raise SessionNotFoundError(f"session is closed: {session.session_id}")
+            raise SessionStateError(
+                f"session is closed: {session.session_id}",
+                session_id=session.session_id,
+                state=SessionState.CLOSED.value,
+                allowed=["open"],
+            )
         return session
 
     def _readers_for(self, session: DocumentSession) -> dict:

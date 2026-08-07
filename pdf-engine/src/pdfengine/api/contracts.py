@@ -256,6 +256,11 @@ class CommandDispatcher:
             feature = getattr(exc, "feature", None)
             if feature:
                 details["feature"] = feature
+            for name in ("session_id", "state", "attempted", "allowed"):
+                value = getattr(exc, name, None)
+                if value:
+                    key = "sessionId" if name == "session_id" else name
+                    details[key] = value
             return failure(request_id, exc.code, str(exc), **details)
         except (ValueError, TypeError) as exc:
             return failure(request_id, "invalid_request", str(exc))
@@ -294,6 +299,7 @@ class CommandDispatcher:
         return {
             "sessionId": session.session_id,
             "document": document_dto(self.engine.inspect_document(session)),
+            "state": session.state_name.value,
             "canUndo": session.state.can_undo,
             "canRedo": session.state.can_redo,
         }

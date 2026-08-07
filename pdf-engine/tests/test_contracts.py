@@ -183,7 +183,7 @@ def test_close_ends_the_session(dispatcher, opened) -> None:
         "closed": True,
     }
     follow_up = dispatcher.dispatch(request("inspect", sessionId=session_id))
-    assert follow_up["error"]["code"] == "session_not_found"
+    assert follow_up["error"]["code"] == "session_invalid_state"
 
 
 @pytest.mark.parametrize(

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
+from enum import Enum
 from hashlib import sha256
 from pathlib import Path
 from uuid import uuid4
@@ -15,6 +16,29 @@ from pdfengine.parser.values import PdfName
 
 
 _SAMPLE_BYTES = 65536
+
+
+class SessionState(str, Enum):
+    """The two states a session ID can be in."""
+
+    OPEN = "open"
+    CLOSED = "closed"
+
+
+@dataclass(frozen=True)
+class SessionTombstone:
+    """What survives a close: enough to answer "that ID was yours", nothing more.
+
+    Deliberately holds no reader, model, cache directory, or password. Those are
+    released at close and must not be resurrectable from a tombstone.
+    """
+
+    session_id: str
+    closed_at: float
+
+    @property
+    def state(self) -> SessionState:
+        return SessionState.CLOSED
 
 
 @dataclass(frozen=True)
@@ -69,6 +93,12 @@ class DocumentSession:
     capability request rather than at open time, so opening a large scanned
     document does not pay for a survey nobody asked for.
     """
+
+    @property
+    def state_name(self) -> SessionState:
+        """The lifecycle state, kept separate from ``state`` (the edit history)."""
+
+        return SessionState.CLOSED if self.closed else SessionState.OPEN
 
     @classmethod
     def open(
