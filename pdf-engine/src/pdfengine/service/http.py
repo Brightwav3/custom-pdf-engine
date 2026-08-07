@@ -75,13 +75,16 @@ class _Handler(BaseHTTPRequestHandler):
                 )
             return
         if path.startswith("/v1/artifacts/"):
-            artifact = self.dispatcher.artifacts.get(path[len("/v1/artifacts/") :])
-            if artifact is None:
+            artifact_id = path[len("/v1/artifacts/") :]
+            registry = self.dispatcher.engine.artifacts
+            try:
+                artifact = registry.get_for_transport(artifact_id)
+            except InvalidRequestError as exc:
                 self._send_json(
-                    404, failure("unknown", "invalid_request", "unknown artifact")
+                    404, failure("unknown", exc.code, str(exc), field="artifactId")
                 )
                 return
-            self._send(200, artifact, "image/png")
+            self._send(200, artifact.read(), artifact.content_type)
             return
         self._send_json(404, failure("unknown", "invalid_request", f"no route {path}"))
 

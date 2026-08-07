@@ -173,3 +173,28 @@ def test_only_documented_kinds_are_accepted(registry) -> None:
             session_id="session_a",
             storage=MemoryArtifact(b""),
         )
+
+
+def test_metadata_cannot_be_mutated_through_the_descriptor(registry) -> None:
+    """A frozen dataclass freezes the field, not the dict behind it.
+
+    Command code now holds real ``Artifact`` objects, so a mutable metadata
+    mapping would let any holder rewrite the registry's stored descriptor.
+    """
+
+    artifact = registry.register(
+        kind="page_render",
+        content_type="image/png",
+        session_id="session_a",
+        storage=MemoryArtifact(b"pixels"),
+        metadata={"pageId": "page_1"},
+    )
+
+    with pytest.raises(TypeError):
+        artifact.metadata["pageId"] = "page_2"
+
+    assert registry.get(artifact.artifact_id, "session_a").metadata == {
+        "pageId": "page_1"
+    }
+    assert artifact.as_dict()["metadata"] == {"pageId": "page_1"}
+    assert type(artifact.as_dict()["metadata"]) is dict

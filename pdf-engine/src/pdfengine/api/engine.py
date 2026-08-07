@@ -24,6 +24,7 @@ from pdfengine.rendering.base import DpiRenderer, PageRenderer, RendererCapabili
 from pdfengine.rendering.cache import RenderCache
 from pdfengine.rendering.poppler import PopplerRenderer
 
+from .artifacts import ArtifactRegistry
 from .models import (
     AddTextLayer,
     DocumentInfo,
@@ -77,6 +78,7 @@ class PdfEngine:
         self._ocr = ocr if ocr is not None else _default_ocr()
         self._sessions: dict[str, DocumentSession] = {}
         self._tombstones: dict[str, SessionTombstone] = {}
+        self.artifacts = ArtifactRegistry()
 
     # -- lifecycle -------------------------------------------------------
 
@@ -115,6 +117,7 @@ class PdfEngine:
     def close(self, session: DocumentSession | str) -> None:
         session = self._as_session(session)
         session.close()
+        self.artifacts.forget_session(session.session_id)
         self._sessions.pop(session.session_id, None)
         self._tombstones[session.session_id] = SessionTombstone(
             session_id=session.session_id, closed_at=time.time()
@@ -171,11 +174,11 @@ class PdfEngine:
         "inspect",
         "capabilities",
         "render",
+        "artifact",
         "apply",
         "undo",
         "redo",
         "save",
-        "artifact",
         "close",
     )
 

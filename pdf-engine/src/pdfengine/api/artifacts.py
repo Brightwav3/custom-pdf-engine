@@ -12,6 +12,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from hashlib import sha256
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any, Mapping, Protocol, runtime_checkable
 from uuid import uuid4
 
@@ -99,6 +100,17 @@ class Artifact:
     storage: ArtifactStorage
     metadata: Mapping[str, Any] = field(default_factory=dict)
 
+    def __post_init__(self) -> None:
+        """Make ``metadata`` genuinely read-only.
+
+        A frozen dataclass freezes the *field*, not what the field points at.
+        Without this, any holder of an ``Artifact`` could reach through and
+        mutate the registry's stored descriptor in place. The mapping is copied
+        first so the caller's dict cannot alias it either.
+        """
+
+        object.__setattr__(self, "metadata", MappingProxyType(dict(self.metadata)))
+
     def read(self) -> bytes:
         return self.storage.read()
 
@@ -170,6 +182,19 @@ class ArtifactRegistry:
 
         artifact = self._artifacts.get(artifact_id)
         if artifact is None or artifact.session_id != session_id:
+            raise InvalidRequestError("unknown artifact", field="artifactId")
+        return artifact
+
+    def get_for_transport(self, artifact_id: str) -> Artifact:
+        """Look an artifact up without a session, for the HTTP byte route.
+
+        The loopback service has no session context on a GET. This is a
+        convenience path only: the ``artifact`` command remains the ownership-
+        checked way in, and this route is loopback-bound by default.
+        """
+
+        artifact = self._artifacts.get(artifact_id)
+        if artifact is None:
             raise InvalidRequestError("unknown artifact", field="artifactId")
         return artifact
 

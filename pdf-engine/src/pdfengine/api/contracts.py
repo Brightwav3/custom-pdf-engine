@@ -10,7 +10,6 @@ from __future__ import annotations
 import base64
 from pathlib import Path
 from typing import Any, Mapping
-from uuid import uuid4
 
 from pdfengine.errors import (
     InvalidRequestError,
@@ -18,6 +17,7 @@ from pdfengine.errors import (
     SessionNotFoundError,
 )
 
+from .artifacts import FileArtifact, MemoryArtifact
 from .engine import PdfEngine
 from .models import (
     AddTextLayer,
@@ -41,6 +41,7 @@ SCHEMA_NAMES = (
     "open-request",
     "operation-request",
     "save-request",
+    "artifact-request",
     "response",
     "capabilities-response",
 )
@@ -49,6 +50,7 @@ COMMANDS = (
     "inspect",
     "capabilities",
     "render",
+    "artifact",
     "apply",
     "undo",
     "redo",
@@ -258,7 +260,6 @@ class CommandDispatcher:
 
     def __init__(self, engine: PdfEngine | None = None, cache_root=None) -> None:
         self.engine = engine if engine is not None else PdfEngine(cache_root=cache_root)
-        self.artifacts: dict[str, bytes] = {}
 
     def dispatch(self, payload: object) -> dict:
         request_id = "unknown"
@@ -284,8 +285,9 @@ class CommandDispatcher:
             return failure(request_id, "invalid_request", str(exc))
 
     def close(self) -> None:
+        # ``close_all`` closes every session, and closing a session already
+        # forgets that session's artifact descriptors.
         self.engine.close_all()
-        self.artifacts.clear()
 
     # -- commands ----------------------------------------------------
 
@@ -342,15 +344,26 @@ class CommandDispatcher:
         result = self.engine.render_page(
             session, _string(request, "pageId"), int(_number(request, "width", 1000))
         )
-        artifact_id = f"artifact_{uuid4().hex}"
-        self.artifacts[artifact_id] = result.image_bytes
+        artifact = self.engine.artifacts.register(
+            kind="page_render",
+            content_type="image/png",
+            session_id=session.session_id,
+            storage=MemoryArtifact(result.image_bytes),
+            metadata={
+                "pageId": result.page_id,
+                "width": result.width,
+                "height": result.height,
+            },
+        )
         return {
             "sessionId": session.session_id,
             "pageId": result.page_id,
             "width": result.width,
             "height": result.height,
             "cacheHit": result.cache_hit,
-            "artifactId": artifact_id,
+            # ``artifactId`` stays top level: callers already depend on it.
+            "artifactId": artifact.artifact_id,
+            "artifact": artifact.as_dict(),
             "contentType": "image/png",
             "imageBase64": base64.b64encode(result.image_bytes).decode("ascii"),
         }
@@ -420,11 +433,36 @@ class CommandDispatcher:
                 dry_run=dry_run,
             ),
         )
-        return {
+        result = {
             "sessionId": session.session_id,
             "path": str(written),
             "dryRun": dry_run,
             "written": not dry_run,
+        }
+        if not dry_run:
+            # A dry run wrote nothing, so there is nothing to describe.
+            result["artifact"] = self.engine.artifacts.register(
+                kind="saved_document",
+                content_type="application/pdf",
+                session_id=session.session_id,
+                storage=FileArtifact(written),
+            ).as_dict()
+        return result
+
+    def _command_artifact(self, request: Mapping[str, Any]) -> dict:
+        _reject_unknown(
+            request,
+            {"apiVersion", "requestId", "command", "sessionId", "artifactId"},
+            "request",
+        )
+        session = self._session(request)
+        artifact = self.engine.artifacts.get(
+            _string(request, "artifactId"), session.session_id
+        )
+        return {
+            "sessionId": session.session_id,
+            "artifact": artifact.as_dict(),
+            "bytes": base64.b64encode(artifact.read()).decode("ascii"),
         }
 
     def _command_close(self, request: Mapping[str, Any]) -> dict:
