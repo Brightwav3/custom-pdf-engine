@@ -10,7 +10,7 @@ and it renamed the product to FreeDF without moving a single identifier.
 | v0.1 — parser, editing, rendering, writer, three public surfaces | merged, PR #1 | 242 |
 | 0 + 0b — real-world documents, correct previews, capability discovery, DPI and batch rendering | merged, PR #2 | 290 |
 | 9 — OCR searchable PDF | **open, PR #3** | 383 |
-| v0.2 — integration release: contract freeze, artifacts, session lifecycle, deployment docs, FreeDF rename | merged | 455 |
+| v0.2 — integration release: contract freeze, artifacts, session lifecycle, deployment docs, FreeDF rename | **complete, under review** | 455 |
 
 ## Project
 

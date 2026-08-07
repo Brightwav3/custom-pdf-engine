@@ -30,6 +30,37 @@ Additively, without a version bump:
 - changing an existing error `code`
 - tightening validation so a payload that used to be accepted is rejected
 
+## Exceptions
+
+The rules above are the rules. They have been overruled twice, both times in
+v0.2, both times deliberately and on the record:
+
+- **The closed-session error code.** A command naming a closed session used to
+  fail with `session_not_found`; it now fails with `session_invalid_state`.
+  That is a changed error code for an existing situation.
+- **`undo` and `redo` rejecting unknown fields.** They used to accept them
+  silently. That is tightening validation so a payload that used to be accepted
+  is rejected.
+
+The bar that justified both is the same: each corrected an **inconsistency or
+an oversight that no caller could reasonably have depended on**, not an
+*intended* behaviour. `session_not_found` meaning "closed" conflated two
+situations the engine could always tell apart; every command except `undo` and
+`redo` already rejected unknown fields. Changing behaviour a caller could
+sensibly have built on still forces a version bump, and always will — that is
+the whole point of the distinction, and "it was a mistake" is a claim that has
+to survive being written down.
+
+So it must be written down. Any future exception has to be recorded in
+`docs/CONTRACT-CHANGELOG.md` under **"Changed (behaviour)"**, with the reasoning
+for why the old behaviour was an oversight rather than a design. An exception
+that is not in the changelog is not an exception; it is a breaking change.
+
+Exceptions are expected to stay rare, and their number is itself a signal. Two
+in one release is already the ceiling of what "we got it wrong" can honestly
+explain. If they start accumulating, the correct response is to stop granting
+them and bump the version.
+
 ## The asymmetry that makes this work
 
 ```
