@@ -71,6 +71,23 @@ what may change within a version.
 - `capabilities.read` is retained as an alias of `capabilities.document`. It is
   not removed, per the policy. Prefer `document`.
 
+### Renamed (product only)
+
+- The product and the distribution are now **FreeDF**: `pyproject.toml` builds
+  `freedf`, and the prose across the repository says FreeDF. Nothing on the wire
+  or in an import moved. The Python package is still `pdfengine`, the console
+  script is still `pdfengine`, and every command name, operation kind, error
+  `code`, artifact kind, schema name, and JSON field is byte-for-byte what it
+  was.
+
+  This split is deliberate rather than unfinished work. `docs/contract-policy.md`
+  says an import path or an identifier may not move without a version bump, and
+  it was published in this same release; renaming the package here would have
+  broken every documented import immediately after promising not to. Renaming
+  the Python package is tracked as its own future release with a migration note.
+  `tests/contracts/test_packaging.py` pins both halves so the boundary cannot be
+  crossed by accident.
+
 ### Known limitation
 
 - `filters.decodable` is `["FlateDecode"]`, but Flate *with a predictor* is not

@@ -1,6 +1,10 @@
 # Agent guide
 
-This is the whole contract an automated caller needs. You never have to parse
+This is the whole contract an automated caller needs to drive FreeDF. The
+installed command is `pdfengine`, which is the engine's name on disk rather
+than the product's; both refer to the same thing.
+
+You never have to parse
 prose, guess whether a feature is supported, or infer a page position.
 
 ## Two transports, one contract

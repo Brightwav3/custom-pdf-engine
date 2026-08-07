@@ -1,6 +1,8 @@
 # Python API
 
-Everything public lives on `pdfengine`. Import from the package root.
+FreeDF's Python surface. Everything public lives on the `pdfengine` package —
+the distribution is named FreeDF, the import path is not. Import from the
+package root.
 
 ```python
 from pdfengine import PdfEngine, RotatePages, SaveOptions

@@ -8,6 +8,11 @@ one that matches how your caller is shaped.
 Every surface accepts the same command set: `open`, `inspect`, `capabilities`,
 `render`, `apply`, `undo`, `redo`, `save`, `artifact`, `close`.
 
+A note on names, because two of them appear below: the product and the
+distribution are **FreeDF**, while the Python package and the installed command
+are both `pdfengine`. You install FreeDF, then you `import pdfengine` and run
+`pdfengine serve`. That split is intentional — see `docs/CONTRACT-CHANGELOG.md`.
+
 ## Python package
 
 Use when the caller is Python and wants typed models and in-process speed.

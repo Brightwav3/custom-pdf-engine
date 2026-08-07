@@ -1,5 +1,11 @@
 # Contract compatibility policy
 
+This is FreeDF's contract. The product is FreeDF and the distribution is
+`freedf`, but every identifier this document governs — the Python package, the
+console script, command names, operation kinds, error codes — is spelled
+`pdfengine` or was fixed at v1, and this policy is exactly what stops those from
+being renamed on a whim.
+
 The external contract is versioned by the `apiVersion` field, currently `"v1"`.
 Every public surface — the Python façade, the JSONL CLI, and the HTTP service —
 speaks the same version, because all three route through one dispatcher. There

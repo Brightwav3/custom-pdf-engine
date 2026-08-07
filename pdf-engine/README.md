@@ -1,11 +1,16 @@
-# pdf-engine
+# FreeDF
 
-A small, explicit, local-first PDF engine. It opens common unencrypted PDFs,
+FreeDF is a small, explicit, local-first PDF engine. It opens common unencrypted PDFs,
 reports stable document and page facts, renders local previews, applies
 structural page edits, and saves an independently valid copy.
 
-It is a standalone package. Nothing in `src/pdfengine/` imports a host
-application, and the same contract is available three ways:
+It is a standalone package. The product is FreeDF; the Python package it
+installs is `pdfengine`, and it stays that way — the compatibility policy in
+`docs/contract-policy.md` does not let an import path move without a version
+bump. So you install FreeDF and then `import pdfengine`.
+
+Nothing in `src/pdfengine/` imports a host application, and the same contract
+is available three ways:
 
 - a typed **Python library** — `from pdfengine import PdfEngine`
 - a **JSONL command line** for scripts and AI agents — `pdfengine agent`
