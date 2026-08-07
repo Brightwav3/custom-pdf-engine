@@ -34,7 +34,8 @@
             "source_changed",
             "session_not_found",
             "session_invalid_state",
-            "ocr_unavailable"
+            "ocr_unavailable",
+            "ocr_error"
           ]
         },
         "message": { "type": "string" },

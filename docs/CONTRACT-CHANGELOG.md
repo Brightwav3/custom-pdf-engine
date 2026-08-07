@@ -30,6 +30,15 @@ what may change within a version.
 - Schemas `artifact-request` and `capabilities-response`.
 - `response.json`: the error-code enum gains `session_invalid_state` and
   `ocr_unavailable`.
+- `response.json`: the error-code enum gains `ocr_error`. The code existed
+  before this release, but only Python callers could ever see it: before v0.2
+  `parse_operation` had no `add_text_layer` branch, so no JSON request could
+  reach the OCR path. Exposing `add_text_layer` on the JSON surfaces made
+  `ocr_error` an emittable wire code, and the schema this project serves at
+  `GET /v1/schema/response` has to list it or a validating client rejects a
+  legitimate error envelope whenever Tesseract fails on a page. The full enum
+  now matches every `PdfEngineError` subclass in `errors.py`; `ocr_error` was
+  the only one missing.
 
 ### Changed (behaviour)
 
