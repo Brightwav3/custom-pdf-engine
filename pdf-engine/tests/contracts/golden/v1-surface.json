@@ -1,0 +1,60 @@
+{
+  "apiVersion": "v1",
+  "commands": [
+    "apply",
+    "artifact",
+    "capabilities",
+    "close",
+    "inspect",
+    "open",
+    "redo",
+    "render",
+    "save",
+    "undo"
+  ],
+  "operationKinds": [
+    "add_text_layer",
+    "crop_pages",
+    "delete_pages",
+    "extract_pages",
+    "import_pages",
+    "insert_blank_page",
+    "reorder_pages",
+    "rotate_pages",
+    "set_metadata"
+  ],
+  "errorCodes": [
+    "engine_error",
+    "invalid_operation",
+    "invalid_request",
+    "ocr_error",
+    "ocr_unavailable",
+    "parse_error",
+    "render_error",
+    "renderer_unavailable",
+    "session_invalid_state",
+    "session_not_found",
+    "source_changed",
+    "unsupported_operation",
+    "unsupported_pdf"
+  ],
+  "artifactKinds": [
+    "page_render",
+    "saved_document",
+    "thumbnail"
+  ],
+  "capabilityStates": [
+    "blocked",
+    "error",
+    "ready",
+    "unavailable"
+  ],
+  "schemas": [
+    "artifact-request",
+    "capabilities-response",
+    "open-request",
+    "operation-request",
+    "response",
+    "save-request"
+  ]
+}
