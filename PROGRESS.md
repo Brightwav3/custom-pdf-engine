@@ -1,22 +1,24 @@
-# Custom PDF Engine — Progress
+# FreeDF — Progress
 
 **Where things stand:** v0.1, real-world document support, OCR, and the v0.2
 integration release are all built. The v0.2 work closed the last gap between the
-Python API and the JSON surfaces, so all three surfaces are equivalent again.
+Python API and the JSON surfaces, so all three surfaces are equivalent again,
+and it renamed the product to FreeDF without moving a single identifier.
 
 | Milestone | State | Tests |
 | --- | --- | --- |
 | v0.1 — parser, editing, rendering, writer, three public surfaces | merged, PR #1 | 242 |
 | 0 + 0b — real-world documents, correct previews, capability discovery, DPI and batch rendering | merged, PR #2 | 290 |
 | 9 — OCR searchable PDF | **open, PR #3** | 383 |
-| v0.2 — integration release: contract freeze, artifacts, session lifecycle, deployment docs | merged | 454 |
+| v0.2 — integration release: contract freeze, artifacts, session lifecycle, deployment docs, FreeDF rename | merged | 455 |
 
 ## Project
 
 - Local: `C:\Users\Sajmon\pdf engine`
-- Package root: `pdf-engine/`
+- Package root: `pdf-engine/` — the directory. The distribution is `freedf`; the
+  Python package inside it is `pdfengine`.
 - Remote: `https://github.com/Brightwav3/custom-pdf-engine` (private)
-- Active branch: `feat/ocr-text-layer`
+- Active branch: `feat/v0.2-integration`
 
 Run the suite with:
 
@@ -24,8 +26,10 @@ Run the suite with:
 python -m pytest pdf-engine/tests -q
 ```
 
-383 tests, zero skipped — the real-Poppler and real-Tesseract tests all run on
-this machine rather than skipping.
+455 tests, zero skipped — the real-Poppler and real-Tesseract tests all run on
+this machine rather than skipping. (This line read "383" through the OCR
+milestone and was left behind by the v0.2 work; 383 was the count when
+sub-project 9 landed, and the milestone table above still records it there.)
 
 ---
 
@@ -127,6 +131,73 @@ Languages: `ara ces chi_sim chi_tra deu eng fra jpn kor osd rus spa`.
 Confirmed end to end against real images: Czech
 (`příliš žluťoučký kůň úpěl ďábelské ódy`, exact), Arabic, Cyrillic, Japanese,
 and Chinese.
+
+## v0.2 — integration release (merged)
+
+v0.2 added almost no new PDF capability. It took what already worked in Python
+and made it true on every surface, then wrote the promise down so it stops
+being re-derived from the source each time.
+
+**The contract is frozen and the freeze is enforced.**
+`docs/contract-policy.md` states what may change inside a version (additions)
+and what forces a new one (removals, type changes, changed error codes,
+tightened validation). `tests/contracts/golden/v1-surface.json` pins every
+command, operation kind, error code, artifact kind, capability state, and
+schema name. The manifest fails on *addition* as well as removal — deliberately,
+because growth nobody wrote down is how a contract quietly stops being one. That
+failure is what puts the changelog entry in the same commit as the change.
+
+**Artifacts.** Binary results stopped being a Python-only privilege. `render`
+and `save` return an `artifact` descriptor, and the new `artifact` command
+returns the bytes as base64 on all three surfaces. Kinds: `page_render`,
+`thumbnail`, `saved_document`. HTTP additionally exposes
+`GET /v1/artifacts/<id>` for streaming — documented as *not* ownership-checked,
+because a convenience route that quietly hands any artifact to any caller is
+worth naming rather than discovering.
+
+**OCR reaches the JSON surfaces.** `add_text_layer` was reachable only from
+Python. It is now an operation kind like any other, with `ocr_unavailable` as a
+real error code and `capabilities.ocr` reporting `languages` and `modes`.
+
+**Sessions have a lifecycle.** Closing a session leaves a tombstone. A command
+naming a closed session now fails with `session_invalid_state` carrying
+`details.state` and `details.allowed`, rather than `session_not_found` — which
+had conflated "you closed this" with "this never existed". An ID that was never
+issued still returns `session_not_found`.
+
+**Capability discovery answers questions instead of listing names.**
+`capabilities` takes an optional `sessionId` and returns a `document` block and
+`allowedCommands`. A new state `unavailable` separates "this installation
+cannot do it" from `blocked`, "this document will not let you". `capabilities.read`
+survives as an alias of `document` because the policy says nothing gets removed.
+
+**A tiered acceptance suite.** Contract tests, a shared surface harness so
+parity is asserted once rather than three times, missing-dependency tests, and
+real-backend tests against the actual Poppler and Tesseract installs.
+
+**Deployment models are documented.** `docs/deployment.md` describes the Python
+package, the HTTP service, and the JSONL subprocess as three equal options, with
+lifecycle, failure modes, and the trade-off that makes each one the wrong
+choice for somebody.
+
+**The product is now FreeDF.** The distribution is `freedf` and the prose says
+FreeDF throughout. The Python package, the console script, and every contract
+identifier deliberately stay `pdfengine` — see the deferral below.
+
+### Deferred, on purpose
+
+- **Renaming the Python package `pdfengine` → `freedf`.** This is a breaking
+  change and the contract policy published in this same release forbids one
+  without a version bump. Doing it here would have broken every documented
+  import in the commit after the promise. It is sub-project 10 on the roadmap
+  and needs its own release with a migration note.
+- **`filters.decodable` cannot express the predictor case.** It lists
+  `["FlateDecode"]`, but Flate *with* a `/Predictor` is not decodable by this
+  version, and a flat list of filter names has nowhere to say so.
+  `document.textContent` reports the truth for a specific file; the flat list is
+  what the engine knows about in general.
+- **The unauthenticated artifact GET route.** Documented rather than fixed. It
+  is safe on loopback with one trusted caller and unsafe the moment it is not.
 
 ---
 
@@ -233,6 +304,7 @@ available and take different syntax.
 | 0b | Capability split, DPI and batch rendering | 0 | merged |
 | 9 | OCR searchable PDF | 0b | PR #3 |
 | 9b | Expose `AddTextLayer` over JSON, CLI, and HTTP | 9 | done (v0.2) |
+| 10 | Rename the Python package `pdfengine` → `freedf` — breaking; needs its own release and a migration note | v0.2 | not started |
 | 1 | Content stream parser and font model | — | not started |
 | 2 | Text extraction and search | 1 | not started |
 | 3 | Text editing, span replace without reflow | 2 | not started |
