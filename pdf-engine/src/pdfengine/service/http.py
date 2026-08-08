@@ -12,6 +12,7 @@ import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+from pdfengine import __version__
 from pdfengine.api.contracts import API_VERSION, CommandDispatcher, failure, schema_bytes
 from pdfengine.errors import InvalidRequestError
 
@@ -22,7 +23,10 @@ DRAIN_LIMIT_BYTES = 16 * 1024 * 1024
 
 
 class _Handler(BaseHTTPRequestHandler):
-    server_version = "pdfengine/0.1"
+    # Read from the package rather than hard-coded: the old literal said
+    # "pdfengine/0.1" long after 0.2 shipped, because nothing made the two
+    # move together.
+    server_version = f"FreeDF/{__version__}"
     protocol_version = "HTTP/1.1"
 
     @property
@@ -75,13 +79,16 @@ class _Handler(BaseHTTPRequestHandler):
                 )
             return
         if path.startswith("/v1/artifacts/"):
-            artifact = self.dispatcher.artifacts.get(path[len("/v1/artifacts/") :])
-            if artifact is None:
+            artifact_id = path[len("/v1/artifacts/") :]
+            registry = self.dispatcher.engine.artifacts
+            try:
+                artifact = registry.get_for_transport(artifact_id)
+            except InvalidRequestError as exc:
                 self._send_json(
-                    404, failure("unknown", "invalid_request", "unknown artifact")
+                    404, failure("unknown", exc.code, str(exc), field="artifactId")
                 )
                 return
-            self._send(200, artifact, "image/png")
+            self._send(200, artifact.read(), artifact.content_type)
             return
         self._send_json(404, failure("unknown", "invalid_request", f"no route {path}"))
 

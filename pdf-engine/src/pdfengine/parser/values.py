@@ -53,6 +53,14 @@ class PdfDictionary:
 
 _FLATE = PdfName("FlateDecode")
 
+SUPPORTED_FILTERS: tuple[str, ...] = (_FLATE.value,)
+"""The stream filters this version can actually decode, without their slash.
+
+This is the same knowledge :meth:`PdfStream._decodable_at` applies one filter
+at a time, stated once so a caller can be told up front instead of discovering
+it from an :class:`UnsupportedPdfError`.
+"""
+
 
 @dataclass(frozen=True)
 class PdfStream:

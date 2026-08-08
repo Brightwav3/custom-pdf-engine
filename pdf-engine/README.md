@@ -1,11 +1,16 @@
-# pdf-engine
+# FreeDF
 
-A small, explicit, local-first PDF engine. It opens common unencrypted PDFs,
+FreeDF is a small, explicit, local-first PDF engine. It opens common unencrypted PDFs,
 reports stable document and page facts, renders local previews, applies
 structural page edits, and saves an independently valid copy.
 
-It is a standalone package. Nothing in `src/pdfengine/` imports a host
-application, and the same contract is available three ways:
+It is a standalone package. The product is FreeDF; the Python package it
+installs is `pdfengine`, and it stays that way — the compatibility policy in
+`docs/contract-policy.md` does not let an import path move without a version
+bump. So you install FreeDF and then `import pdfengine`.
+
+Nothing in `src/pdfengine/` imports a host application, and the same contract
+is available three ways:
 
 - a typed **Python library** — `from pdfengine import PdfEngine`
 - a **JSONL command line** for scripts and AI agents — `pdfengine agent`
@@ -42,19 +47,34 @@ output = engine.save(session)          # writes report-edited.pdf, never report.
 engine.close(session)
 ```
 
-## v0.1 capability matrix
+## v0.2 capability matrix
 
-| Area | Supported | Not supported in v0.1 |
+Some rows are conditional rather than a flat yes: OCR needs a Tesseract
+installation and previews need Poppler, and neither is bundled. That
+conditionality is exactly what `capabilities` exists to report — it answers
+`unavailable` when this installation cannot do something, and `blocked` when
+this particular document will not allow it. Ask before you start a batch rather
+than finding out halfway through.
+
+| Area | Supported | Not supported in v0.2 |
 | --- | --- | --- |
 | Document structure | Classic `xref` tables, trailers, indirect objects, inherited page trees | xref streams, object streams, linearized-only recovery |
-| Streams | Unfiltered and `/FlateDecode` | Every other filter (`LZWDecode`, `DCTDecode`, …) |
+| Streams | Any filter opens and survives structural edits — streams are held as raw bytes and decoded only on demand. `/FlateDecode` decodes | Decoding every other filter (`LZWDecode`, `DCTDecode`, …), and `/FlateDecode` **with a `/Predictor`** |
 | Security | Unencrypted documents | Encrypted documents, writing encryption |
 | Edits | Reorder, delete, rotate, insert blank page, crop, extract, import/merge, metadata | Text editing, redaction, annotations, forms |
-| Rendering | Local Poppler `pdftoppm` PNG previews and thumbnails | A built-in graphics renderer, remote rendering |
-| Saving | Full rewrite to a new file, opt-in in-place replacement | Incremental update |
+| OCR | Searchable PDFs via an invisible text layer, on all three surfaces — **requires a Tesseract installation**; without one, capability reports `unavailable` | Editing recognized text; a scan's text is an image |
+| Rendering | PNG previews, thumbnails, high-DPI and batch rendering — **requires Poppler's `pdftoppm` on `PATH`**; without it, capability reports `unavailable` and everything else still works | A built-in graphics renderer, remote rendering |
+| Saving | Full rewrite to a new file, opt-in fingerprinted in-place replacement | Incremental update |
+| Contract | One frozen `v1` contract across Python, JSONL and HTTP, with a published compatibility policy | Multiple concurrent contract versions |
 
 Anything unsupported is reported as a typed error that names the blocking
 feature. The engine never guesses.
+
+The stream row is the one worth reading twice. A document full of JPEGs opens
+and can be reordered, because a structural edit never looks inside a stream.
+What it cannot do is *read* those bytes — and `filters.decodable` is a flat list
+of names that cannot express the predictor exception, so ask
+`document.textContent` what is possible with the file in your hand.
 
 ## Guarantees
 

@@ -146,9 +146,10 @@ def test_render_returns_an_artifact_id_and_inline_png(dispatcher, opened) -> Non
     assert result["artifactId"].startswith("artifact_")
     assert result["contentType"] == "image/png"
     assert base64.b64decode(result["imageBase64"]).startswith(b"\x89PNG\r\n\x1a\n")
-    assert dispatcher.artifacts[result["artifactId"]] == base64.b64decode(
-        result["imageBase64"]
+    stored = dispatcher.engine.artifacts.get(
+        result["artifactId"], opened["sessionId"]
     )
+    assert stored.read() == base64.b64decode(result["imageBase64"])
     assert (result["width"], result["height"], result["cacheHit"]) == (64, 128, False)
 
 
@@ -183,7 +184,7 @@ def test_close_ends_the_session(dispatcher, opened) -> None:
         "closed": True,
     }
     follow_up = dispatcher.dispatch(request("inspect", sessionId=session_id))
-    assert follow_up["error"]["code"] == "session_not_found"
+    assert follow_up["error"]["code"] == "session_invalid_state"
 
 
 @pytest.mark.parametrize(

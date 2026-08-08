@@ -353,13 +353,18 @@ def test_padding_a_non_png_is_refused() -> None:
 # ----------------------------------------------------------------- capability
 
 
-def test_capability_is_blocked_when_the_binary_is_missing(monkeypatch, tmp_path) -> None:
+def test_capability_is_unavailable_when_the_binary_is_missing(
+    monkeypatch, tmp_path
+) -> None:
+    """A missing binary is an installation fact, not a document one: a caller
+    should be told to install Tesseract, not to try another PDF."""
+
     monkeypatch.setattr(shutil, "which", lambda name: None)
     monkeypatch.setattr(Path, "is_file", lambda self: False)
 
     capability = TesseractOcr(tmp_path / "nowhere").capability()
 
-    assert capability.state == "blocked"
+    assert capability.state == "unavailable"
     assert "not found" in capability.detail
 
 

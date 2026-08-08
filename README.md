@@ -131,16 +131,35 @@ FreeDF is under active development.
 - Local HTTP API
 - JSONL agent CLI
 - Contract-parity validation
-- Automated test suite (300+ tests)
+- OCR searchable PDFs
+- Invisible text layer generation
+- Tesseract integration
+- OCR capability reporting
+- Versioned contract with a published compatibility policy
+- Frozen surface manifest covering commands, operations, error codes and schemas
+- Session lifecycle with tombstoned closed sessions
+- Capability discovery for both the engine and the open document
+- Artifacts as descriptors, retrievable on every surface
+- Tiered acceptance suite
+- Automated test suite (455 tests, zero skipped)
+
+As of v0.2, OCR is not a Python-only feature. `add_text_layer` is an operation
+kind like any other, so it reaches the Python API, the JSONL CLI and the HTTP
+service alike.
 
 ---
 
 ## In Progress
 
-- OCR searchable PDFs
-- Invisible text layer generation
-- Tesseract integration
-- OCR capability reporting
+No feature is mid-flight. v0.2 closed the gap between the Python API and the
+JSON surfaces rather than adding capability, so the engine is at a deliberate
+stopping point.
+
+The next milestone is the content stream parser and font model, and whether to
+build it is still an open question — it is larger than everything built so far
+combined, and only pays off through text editing. Annotations, forms and
+watermarks are each a fraction of that work. See `PROGRESS.md` for the
+trade-off.
 
 ---
 
@@ -438,26 +457,33 @@ A failed validation never overwrites the original file.
 - High-DPI rendering
 - Batch rendering
 - Contract parity
+- OCR and searchable PDF generation
+- Contract freeze and compatibility policy
+- Session lifecycle
+- Artifacts
 
 ---
 
-## Currently Under Development
+## Completed in v0.2
 
 ### OCR
 
-The next major milestone is searchable PDF generation.
+Searchable PDF generation shipped. Unlike text editing, OCR is additive.
 
-Unlike text editing, OCR is additive.
+The original page remains untouched while an invisible Unicode text layer is added above it, which is why it needed neither the content stream parser nor the font model that text editing requires.
 
-The original page remains untouched while an invisible Unicode text layer is added above it.
-
-Current work includes:
+Delivered:
 
 - Tesseract adapter
 - TSV parsing
 - coordinate transforms
-- invisible font generation
+- invisible glyphless font generation
 - searchable PDF writing
+- OCR reachable from Python, JSONL and HTTP alike
+
+### Integration
+
+The rest of v0.2 made the contract explicit rather than implied: a published compatibility policy, a frozen surface manifest that fails on undocumented additions as well as removals, closed sessions that report `session_invalid_state` instead of pretending they never existed, capability discovery that distinguishes "this installation cannot" from "this document will not let you", and binary results exposed as artifacts on every surface instead of only in Python.
 
 ---
 

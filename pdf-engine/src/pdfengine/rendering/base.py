@@ -4,12 +4,16 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
+
+# Renderer and recognizer share one capability vocabulary on purpose: a caller
+# reading a capability report must not have to learn which subsystem an entry
+# came from before it can interpret ``unavailable``. The definition lives in
+# ocr.base because that package has no dependency on rendering.
+from pdfengine.ocr.base import CAPABILITY_STATES, CapabilityState  # noqa: F401
 
 
 PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
-
-CapabilityState = Literal["ready", "blocked", "error"]
 
 
 @dataclass(frozen=True)

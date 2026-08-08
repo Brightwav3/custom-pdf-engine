@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from pdfengine import __version__
 from pdfengine.api.contracts import API_VERSION, CommandDispatcher, SCHEMA_NAMES
 from pdfengine.cli.agent import run_agent
 from pdfengine.cli.main import main
@@ -106,7 +107,7 @@ def test_a_closed_session_reports_a_typed_error(agent, write_pdf) -> None:
         {"apiVersion": "v1", "requestId": "i", "command": "inspect", "sessionId": session_id},
     )
 
-    assert responses[1]["error"]["code"] == "session_not_found"
+    assert responses[1]["error"]["code"] == "session_invalid_state"
 
 
 def test_the_full_agent_workflow_saves_a_verified_copy(agent, write_pdf, tmp_path) -> None:
@@ -185,7 +186,7 @@ def test_version_is_reported(capsys) -> None:
         main(["--version"])
 
     assert raised.value.code == 0
-    assert capsys.readouterr().out.strip() == "0.1.0"
+    assert capsys.readouterr().out.strip() == __version__
 
 
 def test_an_unknown_command_exits_with_a_usage_error() -> None:

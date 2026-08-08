@@ -1,0 +1,20 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://pdfengine.local/schemas/v1/artifact-request.json",
+  "title": "Artifact request",
+  "description": "Fetch the bytes of an artifact the engine issued to this session.",
+  "type": "object",
+  "required": ["apiVersion", "requestId", "command", "sessionId", "artifactId"],
+  "additionalProperties": false,
+  "properties": {
+    "apiVersion": { "const": "v1" },
+    "requestId": { "type": "string", "minLength": 1 },
+    "command": { "const": "artifact" },
+    "sessionId": { "type": "string", "minLength": 1 },
+    "artifactId": {
+      "type": "string",
+      "minLength": 1,
+      "description": "An artifact ID from a render or save result. Only the owning session may fetch it."
+    }
+  }
+}

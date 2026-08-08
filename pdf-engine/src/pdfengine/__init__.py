@@ -7,6 +7,7 @@ The public surface is :class:`PdfEngine` plus the immutable models in
 
 from .api.engine import PdfEngine
 from .api.models import (
+    AddTextLayer,
     CropPages,
     DeletePages,
     DocumentInfo,
@@ -21,33 +22,46 @@ from .api.models import (
     SaveOptions,
     SetMetadata,
 )
-from .api.session import DocumentSession, FileFingerprint
+from .api.session import (
+    DocumentSession,
+    FileFingerprint,
+    SessionState,
+    SessionTombstone,
+)
+from .editing.state import DocumentState
 from .errors import (
     InvalidOperationError,
     InvalidRequestError,
+    OcrError,
+    OcrUnavailableError,
     PdfEngineError,
     PdfParseError,
     RenderError,
     RendererUnavailableError,
     SessionNotFoundError,
+    SessionStateError,
     SourceChangedError,
     UnsupportedOperationError,
     UnsupportedPdfError,
 )
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 __all__ = [
+    "AddTextLayer",
     "CropPages",
     "DeletePages",
     "DocumentInfo",
     "DocumentSession",
+    "DocumentState",
     "ExtractPages",
     "FileFingerprint",
     "ImportPages",
     "InsertBlankPage",
     "InvalidOperationError",
     "InvalidRequestError",
+    "OcrError",
+    "OcrUnavailableError",
     "Operation",
     "PageInfo",
     "PdfEngine",
@@ -60,6 +74,9 @@ __all__ = [
     "RotatePages",
     "SaveOptions",
     "SessionNotFoundError",
+    "SessionState",
+    "SessionStateError",
+    "SessionTombstone",
     "SetMetadata",
     "SourceChangedError",
     "UnsupportedOperationError",

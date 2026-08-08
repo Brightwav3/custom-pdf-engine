@@ -44,7 +44,7 @@ class PopplerRenderer:
     def capability(self) -> RendererCapability:
         if self._resolve_executable() is None:
             return RendererCapability(
-                "blocked", f"Poppler executable not found: {self._executable}"
+                "unavailable", f"Poppler executable not found: {self._executable}"
             )
         return RendererCapability("ready")
 

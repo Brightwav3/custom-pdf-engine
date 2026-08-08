@@ -32,7 +32,10 @@
             "renderer_unavailable",
             "render_error",
             "source_changed",
-            "session_not_found"
+            "session_not_found",
+            "session_invalid_state",
+            "ocr_unavailable",
+            "ocr_error"
           ]
         },
         "message": { "type": "string" },
@@ -73,7 +76,7 @@
     },
     "read": {
       "type": "object",
-      "description": "What this document can be read for, as opposed to edited into. Present only when a response describes an open session, because it describes a specific document.",
+      "description": "What this document can be read for, as opposed to edited into. Present only when a response describes an open session, because it describes a specific document. Deprecated: the capabilities command now reports the same object as 'document', and capabilities-response.json is the authoritative description.",
       "required": ["structuralEdit", "textContent"],
       "properties": {
         "structuralEdit": {
@@ -81,7 +84,10 @@
           "description": "Reordering, deleting, rotating, cropping, importing and saving. Always ready: these copy stream bytes through without decoding them.",
           "required": ["state", "detail"],
           "properties": {
-            "state": { "type": "string", "enum": ["ready", "blocked"] },
+            "state": {
+              "type": "string",
+              "enum": ["ready", "blocked", "unavailable", "error"]
+            },
             "detail": { "type": "string" }
           }
         },
@@ -90,7 +96,10 @@
           "description": "Anything that must look inside stream bytes. Blocked when the pages reach a stream whose filters this version cannot decode.",
           "required": ["state", "detail", "filters", "objectCount"],
           "properties": {
-            "state": { "type": "string", "enum": ["ready", "blocked"] },
+            "state": {
+              "type": "string",
+              "enum": ["ready", "blocked", "unavailable", "error"]
+            },
             "detail": {
               "type": "string",
               "description": "Human-readable reason when blocked, empty when ready."

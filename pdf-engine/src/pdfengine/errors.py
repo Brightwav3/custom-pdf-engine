@@ -88,3 +88,29 @@ class SessionNotFoundError(PdfEngineError):
     """Raised when a request names a session that is closed or unknown."""
 
     code = "session_not_found"
+
+
+class SessionStateError(PdfEngineError):
+    """Raised when a session exists but its lifecycle state forbids the command.
+
+    Distinct from :class:`SessionNotFoundError` on purpose. "This ID was closed"
+    and "this ID was never issued" call for different fixes, and collapsing them
+    forces a caller to guess which one it hit.
+    """
+
+    code = "session_invalid_state"
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        session_id: str,
+        state: str,
+        attempted: str = "",
+        allowed: tuple[str, ...] | list[str] = (),
+    ) -> None:
+        super().__init__(message)
+        self.session_id = session_id
+        self.state = state
+        self.attempted = attempted
+        self.allowed = list(allowed)

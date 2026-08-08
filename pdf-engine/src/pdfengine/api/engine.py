@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tempfile
+import time
 from hashlib import sha256
 from pathlib import Path
 from typing import Iterable, Sequence
@@ -13,14 +14,17 @@ from pdfengine.errors import (
     OcrUnavailableError,
     PdfEngineError,
     SessionNotFoundError,
+    SessionStateError,
     SourceChangedError,
 )
 from pdfengine.ocr.base import OcrCapability, OcrEngine
 from pdfengine.ocr.tesseract import TesseractOcr
+from pdfengine.parser.values import SUPPORTED_FILTERS
 from pdfengine.rendering.base import DpiRenderer, PageRenderer, RendererCapability
 from pdfengine.rendering.cache import RenderCache
 from pdfengine.rendering.poppler import PopplerRenderer
 
+from .artifacts import ArtifactRegistry
 from .models import (
     AddTextLayer,
     DocumentInfo,
@@ -31,7 +35,7 @@ from .models import (
     RenderResult,
     SaveOptions,
 )
-from .session import DocumentSession
+from .session import DocumentSession, SessionState, SessionTombstone
 
 
 DEFAULT_THUMBNAIL_WIDTH = 180
@@ -73,6 +77,8 @@ class PdfEngine:
         self._renderer = renderer if renderer is not None else PopplerRenderer()
         self._ocr = ocr if ocr is not None else _default_ocr()
         self._sessions: dict[str, DocumentSession] = {}
+        self._tombstones: dict[str, SessionTombstone] = {}
+        self.artifacts = ArtifactRegistry()
 
     # -- lifecycle -------------------------------------------------------
 
@@ -88,14 +94,34 @@ class PdfEngine:
 
     def session(self, session_id: str) -> DocumentSession:
         session = self._sessions.get(session_id)
-        if session is None or session.closed:
-            raise SessionNotFoundError(f"unknown or closed session: {session_id}")
-        return session
+        if session is not None and not session.closed:
+            return session
+        tombstone = self._tombstones.get(session_id)
+        if tombstone is not None:
+            raise SessionStateError(
+                f"session is closed: {session_id}",
+                session_id=session_id,
+                state=tombstone.state.value,
+                allowed=["open"],
+            )
+        raise SessionNotFoundError(f"unknown or closed session: {session_id}")
+
+    def tombstone(self, session_id: str) -> SessionTombstone:
+        """The record of a closed session. Raises if the ID was never issued."""
+
+        tombstone = self._tombstones.get(session_id)
+        if tombstone is None:
+            raise SessionNotFoundError(f"no closed session: {session_id}")
+        return tombstone
 
     def close(self, session: DocumentSession | str) -> None:
         session = self._as_session(session)
         session.close()
+        self.artifacts.forget_session(session.session_id)
         self._sessions.pop(session.session_id, None)
+        self._tombstones[session.session_id] = SessionTombstone(
+            session_id=session.session_id, closed_at=time.time()
+        )
 
     def close_all(self) -> None:
         for session in list(self._sessions.values()):
@@ -134,8 +160,9 @@ class PdfEngine:
         """Whether text can be recognized right now. Never raises.
 
         A missing Tesseract is a fact about the machine, not a programming
-        error: it comes back as a ``blocked`` capability so a caller can grey
-        the feature out, exactly as a missing Poppler does for previews.
+        error: it comes back as an ``unavailable`` capability so a caller can
+        grey the feature out and say what to install, exactly as a missing
+        Poppler does for previews.
         """
 
         try:
@@ -143,25 +170,61 @@ class PdfEngine:
         except Exception as exc:  # a broken adapter must not crash the caller
             return OcrCapability("error", str(exc))
 
+    ALLOWED_COMMANDS_WHEN_OPEN: tuple[str, ...] = (
+        "inspect",
+        "capabilities",
+        "render",
+        "artifact",
+        "apply",
+        "undo",
+        "redo",
+        "save",
+        "close",
+    )
+
     def capabilities(self, session: DocumentSession | str | None = None) -> dict:
         preview = self.renderer_capability()
+        ocr = self.ocr_capability()
         capabilities = {
             "preview": {"state": preview.state, "detail": preview.detail},
-            "ocr": self.ocr_capability().as_dict(),
-            "operations": [
-                {
-                    "kind": operation.kind,
-                    "safe": True,
-                    "requires": [],
-                    "schema": "operation-request.json",
-                }
-                for operation in OPERATION_TYPES
-            ],
+            "ocr": ocr.as_dict(),
+            "operations": self._operation_capabilities(ocr),
             "save": {"fullRewriteOnly": True, "inPlaceRequiresOptIn": True},
+            "filters": {"decodable": list(SUPPORTED_FILTERS)},
         }
         if session is not None:
-            capabilities["read"] = self._read_capability(self._as_session(session))
+            document = self._read_capability(self._as_session(session))
+            capabilities["document"] = document
+            # Retained under its v0.1 name: the policy forbids removing a field.
+            capabilities["read"] = document
+            capabilities["allowedCommands"] = list(self.ALLOWED_COMMANDS_WHEN_OPEN)
         return capabilities
+
+    def _operation_capabilities(self, ocr: OcrCapability) -> list[dict]:
+        """Report per-operation readiness rather than a flat catalogue.
+
+        Structural edits copy stream bytes through untouched, so they are ready
+        whenever the document opened. ``add_text_layer`` is only as available as
+        the OCR installation behind it, and saying so here is what stops a caller
+        from discovering that by catching an error mid-batch.
+        """
+
+        entries = []
+        for operation in OPERATION_TYPES:
+            state, detail = "ready", ""
+            if operation.kind == "add_text_layer" and ocr.state != "ready":
+                state, detail = ocr.state, ocr.detail
+            entries.append(
+                {
+                    "kind": operation.kind,
+                    "state": state,
+                    "detail": detail,
+                    "safe": True,
+                    "requires": ["ocr"] if operation.kind == "add_text_layer" else [],
+                    "schema": "operation-request.json",
+                }
+            )
+        return entries
 
     def _read_capability(self, session: DocumentSession) -> dict:
         """Describe what this document can be *read* for, not just edited into.
@@ -356,7 +419,12 @@ class PdfEngine:
         if isinstance(session, str):
             return self.session(session)
         if session.closed:
-            raise SessionNotFoundError(f"session is closed: {session.session_id}")
+            raise SessionStateError(
+                f"session is closed: {session.session_id}",
+                session_id=session.session_id,
+                state=SessionState.CLOSED.value,
+                allowed=["open"],
+            )
         return session
 
     def _readers_for(self, session: DocumentSession) -> dict:
