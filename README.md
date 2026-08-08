@@ -1,215 +1,176 @@
 # FreeDF
 
-> **An open, MIT-licensed PDF engine for parsing, rendering, editing and writing PDF documents.**
+> **A small, explicit, open PDF engine for Python, local services, automation, and AI agents.**
 
-FreeDF is an independent PDF engine written in Python.
+FreeDF is an MIT-licensed PDF engine for parsing, rendering, editing, OCR, and writing PDF documents without relying on a proprietary editing SDK.
 
-Its goal is simple: provide developers with a transparent, extensible and well-tested foundation for building PDF applications without relying on proprietary editing SDKs.
+It is built around one core rule:
 
-Unlike most PDF libraries, FreeDF is designed around a single immutable document model shared by multiple public interfaces. Whether the caller is a Python application, a desktop editor, an automation script or an AI agent, every operation ultimately passes through the same engine and follows the same validation pipeline.
+> **One engine. One document model. One contract.**
 
-FreeDF is the PDF backend that powers **One Tool to Rule Them All**, but it is developed as a completely independent project under the MIT License.
-
----
+Whether FreeDF is embedded directly in Python, called over HTTP, or controlled as a JSONL subprocess, the same operations, validation rules, capabilities, error codes, and session semantics apply.
 
 > [!WARNING]
 > **FreeDF is currently pre-alpha.**
 >
-> Although the engine already supports structural editing, rendering and multiple public interfaces, the API is still evolving and backward compatibility is **not yet guaranteed**.
+> v0.2 is usable for experimentation, development, and integration work, but the project has not yet undergone formal security auditing or fuzz testing.
 >
-> Production use is not recommended until the first stable release.
+> Production use with sensitive or hostile PDFs is not recommended yet.
+
+---
+
+## What FreeDF Can Do
+
+FreeDF v0.2 currently supports:
+
+* custom PDF parsing;
+* recursive tokenization and PDF primitive values;
+* classic cross-reference tables and trailers;
+* indirect object resolution;
+* stream parsing with lazy decoding;
+* `FlateDecode`;
+* byte-preserving passthrough of untouched streams;
+* immutable document state;
+* stable page identities;
+* page rotation;
+* page deletion;
+* page extraction;
+* page reordering;
+* page cropping;
+* blank-page insertion;
+* metadata editing;
+* cross-document page import;
+* undo and redo;
+* full-document rewriting;
+* validated save operations;
+* Poppler-backed rendering;
+* high-DPI rendering;
+* batch rendering;
+* render caching;
+* Tesseract OCR;
+* searchable PDF generation;
+* invisible Unicode text layers;
+* capability discovery;
+* session lifecycle tracking;
+* binary artifacts;
+* Python API;
+* local HTTP API;
+* JSONL agent interface;
+* versioned machine-readable contracts;
+* contract parity across all public interfaces.
+
+The current automated test suite contains **455 tests with zero skipped** on the reference development environment.
+
+### Not implemented yet
+
+FreeDF does **not** currently provide:
+
+* general text extraction;
+* text search;
+* arbitrary editing of existing text;
+* AcroForm editing;
+* annotations;
+* watermarks;
+* image optimization;
+* font subsetting;
+* secure redaction.
+
+Existing-text editing requires a proper content-stream interpreter and font model. FreeDF intentionally does not fake this with overlays or unreliable heuristics.
 
 ---
 
 # Why FreeDF?
 
-PDF is one of the most complex document formats still in widespread use.
+PDF is not simply a collection of pages.
 
-A document is not simply a collection of pages—it is a graph of indirect objects containing page trees, compressed streams, fonts, images, annotations, metadata, color spaces and drawing instructions accumulated over more than thirty years of specification revisions.
+A real PDF is a graph of indirect objects containing page trees, compressed streams, fonts, images, metadata, annotations, color spaces, resources, and drawing instructions accumulated across decades of specification revisions.
 
-Most software solves this problem by embedding a commercial SDK.
+Many applications handle that complexity by embedding an existing commercial SDK.
 
 FreeDF takes a different approach.
 
-Rather than wrapping an existing editor, it implements the document model itself, exposing clear contracts, explicit capabilities and deterministic behaviour.
+It implements its own document model and exposes explicit contracts around what the engine understands, what it can safely modify, and what it cannot yet do.
 
-The long-term goal is to become a reusable PDF foundation for desktop software, automation systems and AI agents alike.
+The project follows several principles:
 
----
+### Explicit behavior
 
-# Design Principles
+Unsupported features should fail explicitly.
 
-FreeDF is built around a small number of engineering principles.
+A typed error is preferable to silently producing a corrupted or incorrect document.
 
-## Explicit behaviour
+### Immutable editing
 
-Unsupported PDF features should fail explicitly.
+Opening a PDF never changes it.
 
-Returning a typed error is preferable to silently producing an incorrect document.
+Edits are represented as immutable operations projected over the original document state.
 
----
+### Stable page identities
 
-## Immutable public models
+Public editing operations target stable page IDs rather than mutable page indexes.
 
-Public document models never mutate unexpectedly.
+An operation therefore continues to target the correct page even after earlier operations reorder, insert, or delete pages.
 
-Editing is represented as immutable operations that are projected onto a document state.
+### Safe writing
 
-This makes behaviour deterministic, simplifies testing and allows operation replay.
+Normal saves do not overwrite the source document.
 
----
+Replacing the source requires explicit opt-in, and FreeDF detects if the source changed on disk after it was opened.
 
-## Stable page identities
+### Replaceable rendering
 
-Pages are never addressed by mutable indexes.
+Rendering lives behind an engine-owned protocol.
 
-Every page receives a stable identifier that survives insertions, deletions and reordering.
+Poppler is the current renderer, but the document model does not depend on Poppler.
 
-This guarantees that queued operations always target the intended page.
+### Capability discovery
 
----
+Applications should not need to discover unsupported functionality by catching failures halfway through an operation.
 
-## Safe writing
+FreeDF exposes machine-readable capability information before work begins.
 
-Saving a document should never risk destroying the original.
+### Contract parity
 
-Normal saves always write to a temporary destination, validate the result and only then replace the target file atomically.
-
----
-
-## Renderer independence
-
-Rendering is intentionally isolated behind an engine-owned protocol.
-
-The document model must never depend on a particular rendering library.
-
-This allows rendering implementations to evolve independently from parsing and editing.
-
----
-
-## Capability discovery
-
-Applications and AI agents should be able to determine what the engine can safely perform before attempting an operation.
-
-FreeDF exposes structured capability information instead of forcing callers to infer support from runtime failures.
-
----
-
-## Test-first development
-
-Every supported PDF feature is accompanied by focused tests and reproducible fixtures.
-
-Correctness is measured through automated validation rather than manual inspection.
-
----
-
-# Current Status
-
-FreeDF is under active development.
-
-## Implemented
-
-- Custom PDF parser
-- Recursive tokenizer
-- PDF primitive value model
-- Classic cross-reference tables
-- Trailer parsing
-- Indirect object resolution
-- Stream parsing
-- Lazy stream decoding
-- `FlateDecode`
-- Immutable document model
-- Stable page identities
-- Structural editing operations
-- Full document rewrite
-- Safe save pipeline
-- Poppler-backed rendering
-- High-DPI rendering
-- Batch rendering
-- Capability discovery
-- Python API
-- Local HTTP API
-- JSONL agent CLI
-- Contract-parity validation
-- OCR searchable PDFs
-- Invisible text layer generation
-- Tesseract integration
-- OCR capability reporting
-- Versioned contract with a published compatibility policy
-- Frozen surface manifest covering commands, operations, error codes and schemas
-- Session lifecycle with tombstoned closed sessions
-- Capability discovery for both the engine and the open document
-- Artifacts as descriptors, retrievable on every surface
-- Tiered acceptance suite
-- Automated test suite (455 tests, zero skipped)
-
-As of v0.2, OCR is not a Python-only feature. `add_text_layer` is an operation
-kind like any other, so it reaches the Python API, the JSONL CLI and the HTTP
-service alike.
-
----
-
-## In Progress
-
-No feature is mid-flight. v0.2 closed the gap between the Python API and the
-JSON surfaces rather than adding capability, so the engine is at a deliberate
-stopping point.
-
-The next milestone is the content stream parser and font model, and whether to
-build it is still an open question — it is larger than everything built so far
-combined, and only pays off through text editing. Annotations, forms and
-watermarks are each a fraction of that work. See `PROGRESS.md` for the
-trade-off.
-
----
-
-## Planned
-
-- Content stream parser
-- Font model
-- Text extraction
-- Search
-- Text editing
-- Annotations
-- Form filling
-- Watermarks
-- Image optimization
-- Font subsetting
-- Secure redaction
+Python, HTTP, and JSONL are three interfaces to the same engine rather than three independent implementations.
 
 ---
 
 # Architecture
 
 ```text
-                PDF Document
-                     │
-                     ▼
-            Parser & Object Reader
-                     │
-                     ▼
-          Immutable Document Model
-                     │
-     ┌───────────────┼────────────────┐
-     │               │                │
-     ▼               ▼                ▼
- Rendering      Editing Engine     Capability
-   Engine          Operations       Discovery
-     │               │                │
-     └───────────────┼────────────────┘
-                     ▼
-               Full-Rewrite Writer
-                     │
-     ┌───────────────┼────────────────┐
-     ▼               ▼                ▼
- Python API      HTTP API        JSONL CLI
+                         PDF file
+                            │
+                            ▼
+                  Parser / object reader
+                            │
+                            ▼
+                 Immutable document model
+                            │
+             ┌──────────────┼──────────────┐
+             │              │              │
+             ▼              ▼              ▼
+         Rendering       Editing       Capability
+          adapter        projection      discovery
+             │              │              │
+             └──────────────┼──────────────┘
+                            ▼
+                   Full-rewrite writer
+                            │
+                            ▼
+                    Command dispatcher
+                            │
+             ┌──────────────┼──────────────┐
+             ▼              ▼              ▼
+        Python API       HTTP API      JSONL agent
 ```
 
-Every public interface is routed through the same engine.
+Every public surface ultimately reaches the same engine behavior.
+
+---
 
 # Installation
 
-FreeDF currently targets **Python 3.11+**.
+FreeDF requires **Python 3.11+**.
 
 Clone the repository:
 
@@ -218,40 +179,649 @@ git clone https://github.com/Brightwav3/custom-pdf-engine.git
 cd custom-pdf-engine/pdf-engine
 ```
 
-Create a virtual environment.
+Create a virtual environment:
 
-### Windows
+```bash
+python -m venv .venv
+```
+
+### Windows PowerShell
 
 ```powershell
-py -3.11 -m venv .venv
 .venv\Scripts\Activate.ps1
 ```
 
 ### Linux / macOS
 
 ```bash
-python3.11 -m venv .venv
 source .venv/bin/activate
 ```
 
-Install the package in editable mode.
+Install FreeDF:
 
 ```bash
 python -m pip install --upgrade pip
 python -m pip install -e .
 ```
 
-Install development tools.
+Install the development test dependency:
 
 ```bash
 python -m pip install pytest
 ```
 
-Run the test suite.
+Run the test suite:
 
 ```bash
-pytest
+pytest -q
 ```
+
+---
+
+# Optional System Dependencies
+
+FreeDF separates core document functionality from external rendering and OCR backends.
+
+### Poppler
+
+Poppler's `pdftoppm` is used for:
+
+* page previews;
+* thumbnails;
+* high-DPI rasterization;
+* OCR input rendering.
+
+A missing Poppler installation is reported through capability discovery rather than crashing the engine.
+
+### Tesseract
+
+Tesseract is used for OCR and searchable PDF generation.
+
+A missing Tesseract installation similarly reports OCR as `unavailable`.
+
+Structural PDF editing does not require either dependency.
+
+---
+
+# Python Quick Start
+
+```python
+from pdfengine import PdfEngine, RotatePages
+
+engine = PdfEngine()
+
+session = engine.open_document("input.pdf")
+
+info = engine.inspect_document(session)
+first_page = info.pages[0]
+
+engine.apply_operations(
+    session,
+    [
+        RotatePages(
+            (first_page.page_id,),
+            90,
+        )
+    ],
+)
+
+output = engine.save(session, "output.pdf")
+
+engine.close(session)
+
+print(output)
+```
+
+The package installed by the distribution is currently imported as:
+
+```python
+import pdfengine
+```
+
+The distribution itself is named:
+
+```text
+freedf
+```
+
+This distinction is intentional in v0.2. Renaming the public Python package would be a breaking change and is deferred to an explicitly versioned migration.
+
+---
+
+# Editing Operations
+
+Operations are immutable dataclasses.
+
+```python
+from pdfengine import (
+    AddTextLayer,
+    CropPages,
+    DeletePages,
+    ExtractPages,
+    ImportPages,
+    InsertBlankPage,
+    ReorderPages,
+    RotatePages,
+    SetMetadata,
+)
+```
+
+Current operations:
+
+| Operation         | Purpose                                 |
+| ----------------- | --------------------------------------- |
+| `RotatePages`     | Rotate one or more pages                |
+| `DeletePages`     | Remove pages                            |
+| `ReorderPages`    | Replace the current page order          |
+| `ExtractPages`    | Keep only selected pages                |
+| `InsertBlankPage` | Insert a new empty page                 |
+| `CropPages`       | Change visible page bounds              |
+| `SetMetadata`     | Modify document metadata                |
+| `ImportPages`     | Import pages from another open document |
+| `AddTextLayer`    | Add searchable OCR text                 |
+
+All page-oriented operations use stable page IDs.
+
+---
+
+# Searchable OCR
+
+OCR is implemented as an additive operation.
+
+FreeDF does not rewrite the visible page contents. Instead, recognized text is written as an invisible Unicode text layer over the existing page.
+
+```python
+from pdfengine import AddTextLayer, PdfEngine
+
+engine = PdfEngine()
+
+session = engine.open_document("scan.pdf")
+info = engine.inspect_document(session)
+
+page_ids = tuple(
+    page.page_id
+    for page in info.pages
+)
+
+if engine.ocr_capability(language="eng").state == "ready":
+    engine.apply_operations(
+        session,
+        [
+            AddTextLayer(
+                page_ids,
+                language="eng",
+                dpi=300,
+            )
+        ],
+    )
+
+    engine.save(
+        session,
+        "searchable.pdf",
+    )
+```
+
+The resulting PDF keeps its original visual appearance while gaining selectable and searchable text.
+
+Recognition is deliberately kept outside the immutable state projection because OCR requires rasterization, subprocess execution, and file I/O.
+
+The operation log records **what should be recognized**; the engine performs recognition when applying the operation.
+
+---
+
+# Capability Discovery
+
+Callers can inspect the engine before attempting work.
+
+```python
+caps = engine.capabilities(session)
+```
+
+Capabilities describe:
+
+* renderer availability;
+* OCR availability;
+* installed OCR languages;
+* available OCR modes;
+* supported operations;
+* per-operation readiness;
+* decodable stream filters;
+* document structural-edit support;
+* document text-content readability;
+* allowed commands for the current session;
+* save constraints.
+
+Capability states include:
+
+| State         | Meaning                                 |
+| ------------- | --------------------------------------- |
+| `ready`       | Feature can be used now                 |
+| `blocked`     | The current document prevents it        |
+| `unavailable` | Required functionality is not installed |
+| `error`       | Capability probing itself failed        |
+
+This distinction matters.
+
+A missing Tesseract installation and a PDF whose structure prevents an operation are two fundamentally different problems and should not produce the same result.
+
+---
+
+# Three Public Interfaces
+
+FreeDF exposes one contract through three deployment models.
+
+| Surface | Best suited for                      | Isolation        | Transport               |
+| ------- | ------------------------------------ | ---------------- | ----------------------- |
+| Python  | Python applications                  | In-process       | Typed Python objects    |
+| HTTP    | Desktop apps and non-Python software | Separate process | JSON / binary artifacts |
+| JSONL   | Agents and automation                | Separate process | stdin / stdout          |
+
+The common command set is:
+
+```text
+open
+inspect
+capabilities
+render
+apply
+undo
+redo
+save
+artifact
+close
+```
+
+No interface has privileged behavior.
+
+Contract-parity tests verify that equivalent requests produce equivalent results across all three surfaces.
+
+---
+
+# HTTP Service
+
+Start the local service with:
+
+```bash
+pdfengine serve
+```
+
+By default the server binds to:
+
+```text
+127.0.0.1:8757
+```
+
+Network binding requires explicit opt-in.
+
+Primary endpoints:
+
+```text
+POST /v1/commands
+GET  /v1/health
+GET  /v1/schema/<name>
+GET  /v1/artifacts/<id>
+```
+
+The command endpoint exposes the complete engine contract.
+
+## Artifact security
+
+> [!IMPORTANT]
+> `GET /v1/artifacts/<id>` is a convenience streaming endpoint and is **not ownership-checked**.
+
+The normal `artifact` command verifies that an artifact belongs to the requesting session.
+
+The raw GET endpoint does not.
+
+This is acceptable for a loopback service with a single trusted caller, but it must not be exposed to an untrusted network without authentication or another security layer in front of it.
+
+---
+
+# JSONL Agent Interface
+
+Start the agent process with:
+
+```bash
+pdfengine agent
+```
+
+The process accepts one JSON command per input line and returns one JSON response per output line.
+
+```text
+stdin  → request
+stdout ← response
+stderr ← diagnostics
+```
+
+Nothing except response JSON is written to stdout.
+
+That makes the interface suitable for:
+
+* AI agents;
+* automation systems;
+* subprocess supervisors;
+* sandboxed tools;
+* applications that do not need an HTTP server.
+
+Malformed requests return an error envelope without terminating the process.
+
+---
+
+# Editing Model
+
+Each open document owns a `DocumentState`.
+
+The state contains:
+
+```text
+original document
+       +
+operation history
+       +
+history cursor
+       =
+projected document
+```
+
+Applying an operation creates a new state.
+
+Undo and redo only move the cursor.
+
+```text
+original
+   │
+   ├── rotate
+   │
+   ├── crop
+   │
+   ├── delete
+   │
+   └── reorder
+          ▲
+          │
+        cursor
+```
+
+Applying a new operation after undo discards the abandoned redo branch.
+
+This model provides deterministic replay and keeps the original parsed document separate from user edits.
+
+---
+
+# Stable Page IDs
+
+Pages are not addressed by mutable positions.
+
+Instead:
+
+```text
+page_a12f...
+page_42ce...
+page_998b...
+```
+
+remain the identities used by editing operations.
+
+For example:
+
+```python
+RotatePages(
+    ("page_a12f",),
+    90,
+)
+```
+
+continues to target that page even if another operation previously moved it from page 1 to page 8.
+
+This is particularly important for:
+
+* queued operations;
+* automation;
+* AI agents;
+* undo/redo;
+* cross-document editing;
+* multi-operation batches.
+
+---
+
+# Rendering
+
+Rendering is isolated behind an engine-owned renderer protocol.
+
+The default implementation uses Poppler.
+
+```python
+result = engine.render_page(
+    session,
+    page_id,
+    width=1000,
+)
+```
+
+`RenderResult` contains:
+
+```text
+page_id
+width
+height
+image_bytes
+cache_hit
+```
+
+Rendered previews are cached.
+
+Once the document has edits, FreeDF renders a materialized version of the **projected document state**, not the untouched source PDF.
+
+That means previews reflect:
+
+* rotations;
+* crops;
+* inserted pages;
+* deleted pages;
+* reordered pages;
+* imported pages.
+
+The preview therefore represents what a save would actually produce.
+
+---
+
+# Saving
+
+A normal save creates a new PDF.
+
+```python
+engine.save(
+    session,
+    "edited.pdf",
+)
+```
+
+Replacing the original source requires explicit permission.
+
+FreeDF fingerprints the source when the document is opened.
+
+If another process modifies the source before FreeDF saves, the operation fails with:
+
+```text
+source_changed
+```
+
+rather than overwriting a file that no longer matches the document originally opened.
+
+Conceptually:
+
+```text
+Projected document
+        │
+        ▼
+Full rewrite
+        │
+        ▼
+Temporary/output PDF
+        │
+        ▼
+Re-open
+        │
+        ▼
+Validate
+        │
+        ▼
+Return / replace target
+```
+
+Untouched stream bytes are copied through rather than unnecessarily decoded and recompressed.
+
+---
+
+# Sessions
+
+Opening a PDF creates a document session.
+
+```python
+session = engine.open_document(
+    "document.pdf"
+)
+```
+
+Sessions have explicit lifecycle state.
+
+```text
+OPEN
+ │
+ │ close()
+ ▼
+CLOSED
+```
+
+Closing a session removes its working cache and artifacts but leaves a lightweight tombstone.
+
+This lets FreeDF distinguish between:
+
+```text
+session_not_found
+```
+
+meaning the ID was never issued, and:
+
+```text
+session_invalid_state
+```
+
+meaning the session existed but has already been closed.
+
+A caller therefore receives enough information to determine what actually happened instead of guessing from a generic not-found response.
+
+---
+
+# Artifacts
+
+Binary results are represented as artifacts across the public contract.
+
+Current artifact kinds are:
+
+```text
+page_render
+thumbnail
+saved_document
+```
+
+Artifacts allow rendering and save results to be represented consistently over Python, HTTP, and JSONL.
+
+The JSON interfaces can retrieve artifact data through the `artifact` command, while HTTP additionally provides the raw streaming route.
+
+---
+
+# Errors
+
+All public Python errors inherit:
+
+```python
+PdfEngineError
+```
+
+and expose a stable `.code`.
+
+Current error codes include:
+
+```text
+parse_error
+unsupported_pdf
+invalid_operation
+invalid_request
+renderer_unavailable
+render_error
+ocr_unavailable
+ocr_error
+source_changed
+session_not_found
+session_invalid_state
+```
+
+The same codes appear in JSON error envelopes.
+
+This allows callers to branch on stable machine-readable behavior rather than parsing error messages.
+
+---
+
+# Versioned Contract
+
+FreeDF maintains an explicit public contract covering:
+
+* commands;
+* operation kinds;
+* error codes;
+* capability states;
+* artifact kinds;
+* request schemas;
+* response schemas.
+
+The contract surface is frozen into a golden manifest.
+
+Tests fail on undocumented **additions as well as removals**.
+
+This is deliberate.
+
+An API that grows silently is still changing its contract.
+
+Contract changes are recorded in:
+
+```text
+docs/CONTRACT-CHANGELOG.md
+```
+
+Compatibility rules live in:
+
+```text
+docs/contract-policy.md
+```
+
+---
+
+# Current Parser Boundary
+
+FreeDF intentionally does not claim complete PDF specification coverage.
+
+The current parser is sufficient for the structural editing, rendering, writing, and OCR workflows implemented by v0.2.
+
+A key design property is that structural editing often does not require understanding page content.
+
+For example, reordering a page containing a JPEG does not require decoding that JPEG.
+
+FreeDF therefore keeps stream data lazy and preserves unsupported-but-unmodified content where it can safely do so.
+
+This makes it possible to structurally edit many real-world PDFs without pretending the engine understands every stream inside them.
+
+Anything requiring actual interpretation of page content has stricter requirements.
+
+`capabilities(session)` reports those limitations per document.
+
+### Known v0.2 limitation
+
+The top-level filter capability list cannot describe every possible `/DecodeParms` combination.
+
+For example, plain `FlateDecode` support does not imply support for every predictor configuration layered on top of Flate.
+
+Document-level capability reporting is therefore more authoritative than the flat filter catalogue.
 
 ---
 
@@ -259,334 +829,203 @@ pytest
 
 ```text
 custom-pdf-engine/
-│
 ├── README.md
 ├── LICENSE
 ├── PROGRESS.md
+├── docs/
 │
 └── pdf-engine/
     ├── pyproject.toml
+    ├── docs/
+    │
     ├── src/
     │   └── pdfengine/
     │       ├── api/
-    │       ├── parser/
-    │       ├── rendering/
-    │       ├── editing/
-    │       ├── writer/
     │       ├── capabilities/
     │       ├── cli/
+    │       ├── editing/
     │       ├── http/
-    │       └── ...
+    │       ├── ocr/
+    │       ├── parser/
+    │       ├── rendering/
+    │       └── writing/
     │
     └── tests/
 ```
 
-The engine is intentionally divided into independent subsystems.
+Detailed documentation is kept outside the README where appropriate, including:
 
-Parsing, rendering, editing and writing are treated as separate responsibilities connected through a shared immutable document model.
-
----
-
-# Public Interfaces
-
-FreeDF exposes three equal public interfaces.
-
-## Python API
-
-The native interface for applications embedding the engine directly.
-
-```python
-from pdfengine import PdfEngine
-
-engine = PdfEngine()
-
-doc = engine.open("document.pdf")
+```text
+Python API
+Deployment models
+Contract policy
+Contract changelog
+Development progress
 ```
 
----
+The README describes the project.
 
-## HTTP API
-
-A lightweight local HTTP server intended for desktop applications and tools written in other languages.
-
-Every operation exposed through Python is also available through HTTP.
-
----
-
-## JSONL CLI
-
-Designed primarily for automation and AI agents.
-
-Commands are exchanged as newline-delimited JSON.
-
-This avoids parsing human-readable output and allows deterministic machine interaction.
-
----
-
-# AI-First Design
-
-FreeDF is intentionally designed to work well with autonomous coding agents.
-
-Rather than exposing ad-hoc commands, the engine provides structured contracts that are easy for software to discover and reason about.
-
-Key principles include:
-
-- immutable document models;
-- immutable editing operations;
-- explicit capability discovery;
-- deterministic error reporting;
-- machine-readable JSON contracts;
-- stable identifiers;
-- contract parity across every public interface.
-
-An AI should never need to guess whether an operation is supported.
-
-Instead, it can ask the engine.
-
-Example:
-
-```json
-{
-  "read": {
-    "structural": "ready",
-    "text": "blocked",
-    "filters": [
-        "DCTDecode"
-    ]
-}
-```
-
-The engine reports capabilities before work begins.
-
----
-
-# Development Philosophy
-
-## Source documents are immutable
-
-Opening a PDF never changes it.
-
-Editing operations are recorded separately.
-
-Saving produces a newly written document.
-
----
-
-## Operations are immutable
-
-User actions are represented as immutable commands.
-
-```json
-{
-    "op": "rotate",
-    "pageIds": [
-        "page_a12f"
-    ],
-    "degrees": 90
-}
-```
-
-Undo and redo simply move through the operation history.
-
----
-
-## Pages have identities
-
-Pages are identified by stable IDs rather than mutable positions.
-
-A queued operation remains valid even if earlier edits insert, delete or reorder pages.
-
----
-
-## Unsupported means unsupported
-
-FreeDF deliberately avoids pretending to understand structures it cannot safely process.
-
-When support is unavailable, the engine returns an explicit typed error rather than silently producing an incorrect document.
-
----
-
-## Rendering is replaceable
-
-Rendering is isolated behind an engine-owned protocol.
-
-The parser, editing engine and writer never depend directly on a rendering implementation.
-
----
-
-## Every save is validated
-
-Saving follows a strict pipeline.
-
-```
-Source document
-        │
-        ▼
-Apply operations
-        │
-        ▼
-Write temporary PDF
-        │
-        ▼
-Re-open and validate
-        │
-        ▼
-Atomic replace
-```
-
-A failed validation never overwrites the original file.
+The documentation describes the contract.
 
 ---
 
 # Roadmap
 
-## Completed
+The next major technical boundary is the **text stack**.
 
-- Custom parser
-- Object reader
-- Lazy stream decoding
-- Structural editing
-- Stable page identities
-- Safe save pipeline
-- Full document rewriting
-- Poppler renderer
-- Capability discovery
-- Python API
-- HTTP API
-- JSONL CLI
-- High-DPI rendering
-- Batch rendering
-- Contract parity
-- OCR and searchable PDF generation
-- Contract freeze and compatibility policy
-- Session lifecycle
-- Artifacts
+## Content-stream parser
 
----
+Interpret PDF graphics and text operators rather than treating page content as opaque stream data.
 
-## Completed in v0.2
+## Font model
 
-### OCR
+Understand embedded fonts, encodings, character maps, glyph widths, and Unicode mapping.
 
-Searchable PDF generation shipped. Unlike text editing, OCR is additive.
+## Text extraction
 
-The original page remains untouched while an invisible Unicode text layer is added above it, which is why it needed neither the content stream parser nor the font model that text editing requires.
+Recover text together with its location on the page.
 
-Delivered:
+## Search
 
-- Tesseract adapter
-- TSV parsing
-- coordinate transforms
-- invisible glyphless font generation
-- searchable PDF writing
-- OCR reachable from Python, JSONL and HTTP alike
+Locate text and return its page coordinates.
 
-### Integration
+## Text editing
 
-The rest of v0.2 made the contract explicit rather than implied: a published compatibility policy, a frozen surface manifest that fails on undocumented additions as well as removals, closed sessions that report `session_invalid_state` instead of pretending they never existed, capability discovery that distinguishes "this installation cannot" from "this document will not let you", and binary results exposed as artifacts on every surface instead of only in Python.
+Safely replace existing text spans without pretending PDF has normal word-processing reflow.
+
+After that, planned areas include:
+
+* AcroForms;
+* annotations;
+* watermarks;
+* headers and footers;
+* page numbering;
+* Bates numbering;
+* image optimization;
+* object cleanup;
+* font subsetting;
+* secure redaction.
+
+Text editing is intentionally one of the later milestones because implementing it correctly requires understanding both PDF drawing instructions and font semantics.
 
 ---
 
-## Planned
+# AI and Automation
 
-### Content stream parser
+FreeDF is designed to be usable by autonomous software without requiring it to infer engine behavior.
 
-Interpret PDF graphics operators.
+Agents can discover:
 
-### Font model
+```text
+What commands exist?
+What operations exist?
+Can this document be structurally edited?
+Can its content streams be interpreted?
+Is rendering available?
+Is OCR available?
+Which OCR languages exist?
+Which commands are valid for this session?
+What kind of error occurred?
+```
 
-Understand embedded fonts and glyph mapping.
+through structured contracts rather than human-readable console output.
 
-### Text extraction
+Important properties for automation include:
 
-Recover searchable text with page coordinates.
+* stable identifiers;
+* immutable operations;
+* deterministic state projection;
+* explicit session lifecycle;
+* typed errors;
+* capability discovery;
+* JSON schemas;
+* JSONL transport;
+* contract parity.
 
-### Search
+An agent should not need to guess what FreeDF can do.
 
-Locate text together with its bounding rectangles.
-
-### Text editing
-
-Replace text spans without reflow.
-
-### Forms
-
-Read and update AcroForms.
-
-### Annotations
-
-Create and edit PDF annotations.
-
-### Watermarks
-
-Headers, footers, page numbering and Bates numbering.
-
-### Optimization
-
-Image downsampling, object cleanup and font subsetting.
-
-### Secure redaction
-
-Verified removal of underlying content rather than visual covering.
-
-# Intended Use
-
-FreeDF is designed as a reusable engine rather than an end-user application.
-
-Typical use cases include:
-
-- Desktop PDF editors
-- Document management software
-- PDF automation pipelines
-- Batch document processing
-- AI agents
-- Local HTTP services
-- Command-line tools
-- Conversion software
-- Research projects
-
-Applications are expected to provide their own interface, workflow, packaging and user experience while relying on FreeDF for PDF functionality.
+It can ask the engine.
 
 ---
 
 # Relationship to One Tool
 
-FreeDF is the PDF engine behind **One Tool to Rule Them All**.
-
-The two projects intentionally have different responsibilities.
+FreeDF was originally created as the PDF backend for **One Tool to Rule Them All**, but the engine is intentionally maintained as an independent project.
 
 ```text
-                One Tool
-────────────────────────────────────
+              One Tool
+──────────────────────────────────
 
-User Interface
-Creator
+UI
 Editor
+Creator
 Converter
 Job Queue
 History
 Settings
 Desktop Packaging
 
-            │
-            ▼
+               │
+               ▼
 
-────────────────────────────────────
                FreeDF
-────────────────────────────────────
+──────────────────────────────────
 
 PDF Parsing
 Document Model
 Rendering
 Editing
+OCR
 Writing
-Capability Discovery
+Capabilities
+Contracts
 Python API
 HTTP API
-JSONL CLI
+JSONL API
 ```
 
-Keeping the projects separate allows the engine to evolve independently while remaining reusable by completely unrelated software.
+One Tool owns the application experience.
+
+FreeDF owns PDF behavior.
+
+Keeping that boundary explicit prevents application-specific assumptions from leaking into the engine and allows FreeDF to be reused by unrelated software.
+
+---
+
+# Testing
+
+Correctness is a primary project goal.
+
+The test suite covers:
+
+* tokenizer behavior;
+* parsing;
+* indirect object resolution;
+* stream handling;
+* document structure;
+* editing projection;
+* stable page identities;
+* undo and redo;
+* rendering;
+* render caching;
+* high-DPI rendering;
+* writer behavior;
+* save validation;
+* source-change detection;
+* OCR;
+* Unicode text layers;
+* session lifecycle;
+* artifacts;
+* HTTP behavior;
+* JSONL behavior;
+* schema contracts;
+* cross-surface parity;
+* missing dependency behavior;
+* regression cases.
+
+Real Poppler and Tesseract integration tests are included in the appropriate test tiers.
+
+Synthetic fixtures are used where isolated malformed structures or parser edge cases need to be reproduced precisely.
 
 ---
 
@@ -594,86 +1033,80 @@ Keeping the projects separate allows the engine to evolve independently while re
 
 Contributions are welcome.
 
-Before implementing a large feature, please open an issue describing:
+For substantial features, open an issue first describing:
 
-- the problem being solved;
-- the relevant PDF specification;
-- proposed public behaviour;
-- unsupported cases;
-- testing strategy.
+* the problem being solved;
+* relevant PDF specification behavior;
+* the proposed public contract;
+* unsupported cases;
+* the testing strategy.
 
-Every functional change should include tests.
+Functional changes should include tests.
 
-When possible, keep pull requests focused on a single subsystem.
+Prefer focused pull requests scoped to a subsystem such as:
 
-Examples:
+```text
+parser
+rendering
+editing
+writing
+OCR
+forms
+annotations
+```
 
-- parser
-- rendering
-- writing
-- OCR
-- annotations
-- forms
-
-rather than mixing unrelated features.
-
----
-
-# Testing
-
-Correctness is one of FreeDF's primary goals.
-
-The test suite verifies:
-
-- parser behaviour;
-- object resolution;
-- document structure;
-- rendering contracts;
-- editing operations;
-- writer correctness;
-- API parity;
-- regression cases.
-
-Real-world PDFs are preferred whenever licensing allows.
-
-Artificial fixtures are generated for isolated parser tests.
+rather than combining unrelated changes.
 
 ---
 
 # Security
 
-PDF documents are untrusted binary inputs.
+PDF documents are untrusted binary input.
 
-FreeDF should assume every document may be malformed or intentionally malicious.
+FreeDF assumes documents may be malformed or intentionally hostile.
 
-Current security goals include:
+Current defensive measures include:
 
-- explicit parser failures;
-- deterministic behaviour;
-- validation before saving;
-- atomic writes;
-- no silent corruption.
+* explicit parser failures;
+* typed unsupported-feature errors;
+* deterministic validation;
+* immutable source state;
+* source fingerprinting;
+* validated writes;
+* explicit network opt-in;
+* no silent fallback after unsupported operations.
 
-The project has **not** yet undergone formal security auditing or fuzz testing.
+FreeDF has **not yet undergone a formal security audit or systematic fuzz-testing campaign**.
 
-Until then, production use on sensitive documents is discouraged.
-
-Security issues should be reported privately before public disclosure.
+Until that changes, hostile PDFs should be processed with appropriate process isolation, and sensitive deployments should use conservative network exposure.
 
 ---
 
 # Versioning
 
-FreeDF currently follows **0.x** versioning.
+FreeDF is currently:
 
-During this stage:
+```text
+0.2.0
+```
 
-- APIs may change;
-- modules may move;
-- serialized formats may evolve;
-- backward compatibility is not guaranteed.
+and follows pre-1.0 versioning.
 
-Stable APIs will be introduced before the first major release.
+The distribution name is:
+
+```text
+freedf
+```
+
+while the current public Python import path and console command remain:
+
+```text
+pdfengine
+```
+
+That distinction is deliberate.
+
+Breaking identifiers will move only through explicit versioned migrations rather than silently changing alongside branding.
 
 ---
 
@@ -681,37 +1114,9 @@ Stable APIs will be introduced before the first major release.
 
 FreeDF is released under the **MIT License**.
 
-The goal of the project is to provide a permissive PDF engine that can be used freely in both open-source and commercial software.
+It may be used in both open-source and commercial software.
 
-See the `LICENSE` file for details.
-
----
-
-# Project Goals
-
-FreeDF is not trying to become another wrapper around an existing PDF SDK.
-
-Its objective is to build a transparent, well-tested and reusable PDF engine whose behaviour is understandable from its source code.
-
-Long-term priorities are:
-
-- correctness over feature count;
-- explicit behaviour over hidden magic;
-- reusable architecture over application-specific shortcuts;
-- deterministic APIs over convenience wrappers;
-- long-term maintainability over rapid feature accumulation.
-
-If a feature cannot be implemented safely, FreeDF would rather report that limitation than silently produce an incorrect document.
-
----
-
-# Acknowledgements
-
-FreeDF builds upon the PDF specification and interoperates with existing PDF tooling where appropriate.
-
-Rendering currently relies on **Poppler**, while the engine itself remains responsible for parsing, document modelling, editing, writing and public API behaviour.
-
-The project intentionally avoids coupling its architecture to any single rendering implementation.
+See [`LICENSE`](LICENSE) for the full license text.
 
 ---
 
@@ -719,9 +1124,26 @@ The project intentionally avoids coupling its architecture to any single renderi
 
 FreeDF is an active long-term project.
 
-The parser, renderer, editing model and writer continue to evolve toward a complete, independent PDF engine suitable for desktop applications, automation and AI-assisted workflows.
+v0.2 establishes the core architecture:
 
-Contributions, bug reports and design discussions are always welcome.
-No interface has privileged behaviour.
+```text
+parser
+   +
+immutable document model
+   +
+structural editing
+   +
+rendering
+   +
+OCR
+   +
+safe writer
+   +
+versioned contract
+   +
+three equivalent public surfaces
+```
 
-The Python API, HTTP server and JSONL command interface are required to produce identical results for identical operations, and this guarantee is enforced through contract-parity tests.
+The next major challenge is understanding the contents of PDF pages deeply enough to support reliable extraction, search, and eventually existing-text editing.
+
+Until then, FreeDF prefers an explicit limitation over pretending to support something it cannot yet do correctly.
